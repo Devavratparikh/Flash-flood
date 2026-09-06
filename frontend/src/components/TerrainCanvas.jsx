@@ -3,7 +3,6 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import {
   W, D,
-  makeSkyTexture,
   easeOutCubic,
   disposeObject,
   buildDistrictGroup,
@@ -13,13 +12,10 @@ export default function TerrainCanvas({ district, selected, onSelect }) {
   const mountRef = useRef(null);
   const sceneRef = useRef(null);
 
-  // keep the currently-selected zone id available to the render loop
-  // without needing to recreate the whole scene on every selection change
   if (sceneRef.current) {
     sceneRef.current.selectedId = selected ? selected.id : null;
   }
 
-  // --- one-time scene setup -------------------------------------------------
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return;
@@ -28,9 +24,9 @@ export default function TerrainCanvas({ district, selected, onSelect }) {
     const height = mount.clientHeight || 480;
 
     const scene = new THREE.Scene();
-    const skyTex = makeSkyTexture();
-    scene.background = skyTex;
-    scene.fog = new THREE.Fog(0x2a3d4c, 460, 980);
+    // Flat background matching the site's theme color exactly, no gradient.
+    scene.background = new THREE.Color(0x0b0f14);
+    scene.fog = new THREE.Fog(0x0b0f14, 460, 980);
 
     const camera = new THREE.PerspectiveCamera(42, width / height, 1, 2000);
     camera.position.set(0, 420, 620);
@@ -98,7 +94,6 @@ export default function TerrainCanvas({ district, selected, onSelect }) {
     };
     sceneRef.current = state;
 
-    // click-vs-drag detection, separate from OrbitControls' own listeners
     let downX = 0, downY = 0, moved = 0;
     const dom = renderer.domElement;
     const raycaster = new THREE.Raycaster();
@@ -190,14 +185,12 @@ export default function TerrainCanvas({ district, selected, onSelect }) {
       if (state.districtGroup) disposeObject(state.districtGroup);
       pGeo.dispose();
       pMat.dispose();
-      skyTex.dispose();
       if (mount.contains(dom)) mount.removeChild(dom);
       renderer.dispose();
       sceneRef.current = null;
     };
-  }, []); // run once
+  }, []);
 
-  // --- rebuild terrain whenever the selected district changes ---------------
   useEffect(() => {
     const state = sceneRef.current;
     if (!state) return;
@@ -213,7 +206,6 @@ export default function TerrainCanvas({ district, selected, onSelect }) {
     state.markers = markers;
     state.district = district;
 
-    // cinematic zoom: jump camera out to a wide overview, then glide down
     const overview = new THREE.Vector3(
       state.camera.position.x * 1.4 + 120,
       620,
