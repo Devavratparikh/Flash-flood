@@ -2,13 +2,12 @@ import * as THREE from "three";
 import { TIER, tierFor } from "../data/districts.js";
 
 // ---------------------------------------------------------------------------
-// PHASE 2 NOTE: everything in this file generates a *procedural* terrain.
+// PHASE 2+ NOTE: everything in this file generates a *procedural* terrain.
 // When you move to real elevation data, this is the file to change:
 //   - heightAt(x, z, seed) gets replaced by a lookup into a real DEM raster
 //     (SRTM/Bhuvan), sampled onto this same grid.
 //   - makeDetailTexture() gets replaced by an actual satellite image tile
-//     (e.g. via Mapbox GL JS's raster-dem + satellite-v9 style, which is
-//     built exactly for draping real imagery over real 3D terrain).
+//     (e.g. via Mapbox GL JS's raster-dem + satellite-v9 style).
 // The rest of the pipeline (mesh, river, markers, camera) stays the same.
 // ---------------------------------------------------------------------------
 
@@ -30,6 +29,9 @@ export function heightAt(x, z, seed) {
   return Math.min(Math.max(slope + noise + bigForm, 1.2), 92);
 }
 
+// Terrain surface colors intentionally stay natural/realistic (green valley
+// floor -> rock -> snow) rather than matching the site's UI palette -- these
+// represent elevation, not branding.
 function colorForHeight(h) {
   const stops = [
     { t: 0, c: [42, 88, 56] },
@@ -76,20 +78,6 @@ export function makeDetailTexture() {
   return tex;
 }
 
-export function makeSkyTexture() {
-  const c = document.createElement("canvas");
-  c.width = 2;
-  c.height = 256;
-  const ctx = c.getContext("2d");
-  const grad = ctx.createLinearGradient(0, 0, 0, 256);
-  grad.addColorStop(0, "#0c1520");
-  grad.addColorStop(0.55, "#233444");
-  grad.addColorStop(1, "#4c6473");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 2, 256);
-  return new THREE.CanvasTexture(c);
-}
-
 export function makeFlowTexture() {
   const c = document.createElement("canvas");
   c.width = 64;
@@ -132,7 +120,6 @@ export function disposeObject(obj) {
   });
 }
 
-// Builds one district's terrain + river + zone markers as a single THREE.Group.
 export function buildDistrictGroup(district) {
   const group = new THREE.Group();
 
