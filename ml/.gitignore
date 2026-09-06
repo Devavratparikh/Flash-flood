@@ -16,3 +16,9 @@ __pycache__/
 
 # IDE
 .vscode/
+
+HandLabeled/
+sar_env/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
