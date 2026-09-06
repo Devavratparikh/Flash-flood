@@ -1,2 +1,18 @@
-#ml
-ml/flashflood-layer1/venv/
+# Python virtual environments
+.venv/
+venv/
+**/venv/
+**/.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment/secrets
+.env
+
+# IDE
+.vscode/
