@@ -1,13 +1,11 @@
-// Mock data for the demo. In the real build, this whole file is replaced by
-// an API call to the Node.js backend (GET /api/districts), which itself
-// pulls from PostGIS. The shape (id, name, zones[{score, soil, dam, rain, trend}])
-// is designed to match that future response so swapping the source is a
-// one-line change in App.jsx, not a rewrite of any component.
+// Mock data for the demo. In the real build this is replaced by an API call
+// to the backend (GET /api/districts), pulling zone metadata from PostGIS
+// and live values from the `sensors` table.
 
 export const TIER = {
-  safe: { label: "Normal", color: "#4F9D8B", glow: "rgba(79,157,139,0.18)", hex: 0x4f9d8b },
-  watch: { label: "Watch", color: "#E0A542", glow: "rgba(224,165,66,0.18)", hex: 0xe0a542 },
-  act: { label: "Act now", color: "#E1543B", glow: "rgba(225,84,59,0.22)", hex: 0xe1543b },
+  safe: { label: "Normal", color: "#22C55E", glow: "rgba(34,197,94,0.16)", hex: 0x22c55e },
+  watch: { label: "Watch", color: "#F5A524", glow: "rgba(245,165,36,0.18)", hex: 0xf5a524 },
+  act: { label: "Act now", color: "#EF4444", glow: "rgba(239,68,68,0.20)", hex: 0xef4444 },
 };
 
 export function tierFor(score) {

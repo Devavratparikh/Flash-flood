@@ -4,8 +4,8 @@
 html, body, #root { margin: 0; padding: 0; height: 100%; }
 body {
   font-family: 'IBM Plex Sans', sans-serif;
-  background: #121820;
-  color: #ECEFEF;
+  background: #0B0F14;
+  color: #E8ECEF;
 }
 
 .disp { font-family: 'Space Grotesk', sans-serif; }
@@ -14,27 +14,27 @@ body {
 @keyframes pulseDot { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
 .pulse { animation: pulseDot 1.6s ease-in-out infinite; }
 
-.ff-root { width: 100%; min-height: 100vh; background: #121820; }
+.ff-root { width: 100%; min-height: 100vh; background: #0B0F14; }
 
 .ff-topbar {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 24px; border-bottom: 1px solid #2B3540; gap: 12px; flex-wrap: wrap;
+  padding: 16px 24px; border-bottom: 1px solid #232C36; gap: 12px; flex-wrap: wrap;
 }
 
 .ff-tabs { display: flex; gap: 4px; padding: 16px 24px 0; flex-wrap: wrap; }
 .ff-tab {
-  padding: 8px 16px; font-size: 14px; border: 1px solid #2B3540; border-bottom: none;
-  border-radius: 4px 4px 0 0; background: transparent; color: #8FA0AC; cursor: pointer;
+  padding: 8px 16px; font-size: 14px; border: 1px solid #232C36; border-bottom: none;
+  border-radius: 4px 4px 0 0; background: transparent; color: #7C8994; cursor: pointer;
 }
-.ff-tab.active { background: #1B232B; color: #ECEFEF; }
+.ff-tab.active { background: #121820; color: #E8ECEF; }
 
 .ff-note { padding: 0 24px 12px; }
 
 .ff-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; padding: 0 24px 16px; }
 .ff-terrain-wrap { height: 560px; border-radius: 3px; overflow: hidden; }
-.ff-panel { border: 1px solid #2B3540; background: #1B232B; border-radius: 3px; padding: 16px; }
+.ff-panel { border: 1px solid #232C36; background: #121820; border-radius: 3px; padding: 16px; }
 .ff-alerts-wrap { padding: 0 24px 32px; }
-.ff-legend { display: flex; align-items: center; gap: 16px; color: #8FA0AC; font-size: 12px; flex-wrap: wrap; }
+.ff-legend { display: flex; align-items: center; gap: 16px; color: #7C8994; font-size: 12px; flex-wrap: wrap; }
 
 @media (max-width: 860px) {
   .ff-layout { grid-template-columns: 1fr; }
