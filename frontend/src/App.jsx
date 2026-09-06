@@ -4,8 +4,7 @@ import TerrainCanvas from "./components/TerrainCanvas.jsx";
 import ZonePanel from "./components/ZonePanel.jsx";
 import AlertsFeed from "./components/AlertsFeed.jsx";
 import { DISTRICTS, TIER, tierFor } from "./data/districts.js";
-
-const C = { textMuted: "#8FA0AC" };
+import { C } from "./theme.js";
 
 export default function App() {
   const [districtId, setDistrictId] = useState("chamoli");
@@ -34,7 +33,7 @@ export default function App() {
     <div className="ff-root">
       <div className="ff-topbar">
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <Waves size={22} color="#5B8FA8" />
+          <Waves size={22} color={C.accent} />
           <span className="disp" style={{ fontSize: 18 }}>himvaah</span>
           <span style={{ color: C.textMuted, fontSize: 14, marginLeft: 4 }}>micro-watershed flood risk</span>
         </div>
