@@ -1,4 +1,4 @@
-import { createFileRoute, Link, notFound } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   ArrowRight,
   ArrowUpRight,
@@ -20,39 +20,22 @@ import {
   Sparkline,
   TierChip,
 } from "@/components/app/primitives";
-import {
-  areaById,
-  districtById,
-  horizonsFor,
-  tierFor,
-  weatherFor,
-  type Area,
-} from "@/lib/mock-data";
+import { Loading } from "@/components/app/Loading";
+import { useArea, useAreas, useDistricts } from "@/lib/queries";
+import { horizonsFor, tierFor, weatherFor, type Area } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/area/$areaId")({
-  loader: ({ params }) => {
-    const area = areaById(params.areaId);
-    if (!area) throw notFound();
-    return { area };
-  },
-  head: ({ loaderData }) => {
-    const name = loaderData?.area.name ?? "Area";
-    return {
-      meta: [
-        { title: `${name} — flood risk deep-dive | FlashWatch` },
-        {
-          name: "description",
-          content: `Current weather, multi-horizon flood risk, model reasoning and upstream propagation for ${name}.`,
-        },
-        { property: "og:title", content: `${name} — flood risk deep-dive | FlashWatch` },
-        {
-          property: "og:description",
-          content: `Live flood risk breakdown and model reasoning for ${name}.`,
-        },
-      ],
-    };
-  },
+  head: () => ({
+    meta: [
+      { title: "Area risk deep-dive | FlashWatch" },
+      {
+        name: "description",
+        content:
+          "Current weather, multi-horizon flood risk, model reasoning and upstream propagation for a monitored area.",
+      },
+    ],
+  }),
   component: AreaDetail,
 });
 
@@ -84,13 +67,30 @@ function Neighbour({ area, direction }: { area: Area; direction: "up" | "down" }
 }
 
 function AreaDetail() {
-  const { area } = Route.useLoaderData();
-  const district = districtById(area.districtId)!;
+  const { areaId } = Route.useParams();
+  const { data: area, isLoading, isError } = useArea(areaId);
+  const { areaById } = useAreas();
+  const { districtById } = useDistricts();
+
+  if (isLoading)
+    return (
+      <AppShell>
+        <Loading label="Loading area…" />
+      </AppShell>
+    );
+  if (isError || !area)
+    return (
+      <AppShell>
+        <Loading label="Area not found" error />
+      </AppShell>
+    );
+
+  const district = districtById(area.districtId);
   const weather = weatherFor(area);
   const horizons = horizonsFor(area);
   const tier = tierFor(area.score);
-  const upstream = area.upstream.map((id) => areaById(id)!).filter(Boolean);
-  const downstream = area.downstream.map((id) => areaById(id)!).filter(Boolean);
+  const upstream = area.upstream.map((id) => areaById(id)).filter(Boolean) as Area[];
+  const downstream = area.downstream.map((id) => areaById(id)).filter(Boolean) as Area[];
   const incoming = upstream.some((u) => u.score > area.score);
 
   return (
@@ -100,15 +100,15 @@ function AreaDetail() {
           <div>
             <Link
               to="/districts"
-              search={{ d: district.id }}
+              search={{ d: district?.id }}
               className="text-xs text-muted-foreground hover:text-foreground"
             >
-              {district.name}, {district.state} ←
+              {district?.name}, {district?.state} ←
             </Link>
             <h1 className="display mt-1 text-4xl font-bold">{area.name}</h1>
             <p className="mt-1 text-xs text-muted-foreground">
               {area.elevation} m · {area.population.toLocaleString("en-IN")} residents ·{" "}
-              {district.basin}
+              {district?.basin}
             </p>
           </div>
           <div className="flex items-center gap-4">
@@ -117,7 +117,6 @@ function AreaDetail() {
           </div>
         </header>
 
-        {/* Current weather strip */}
         <Panel className="p-4" alert={tier === "severe"}>
           <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
             {[
@@ -129,12 +128,7 @@ function AreaDetail() {
                 tone: "text-rain",
               },
               { icon: Wind, label: "Wind", value: `${weather.windKph} km/h`, tone: "" },
-              {
-                icon: Gauge,
-                label: "Humidity",
-                value: `${weather.humidity}%`,
-                tone: "text-soil",
-              },
+              { icon: Gauge, label: "Humidity", value: `${weather.humidity}%`, tone: "text-soil" },
             ].map((m) => {
               const Icon = m.icon;
               return (
@@ -171,7 +165,6 @@ function AreaDetail() {
           </div>
         </Panel>
 
-        {/* Horizons */}
         <section>
           <SectionTitle
             title="Multi-horizon risk"
@@ -207,7 +200,6 @@ function AreaDetail() {
         </section>
 
         <div className="grid gap-4 lg:grid-cols-2">
-          {/* Explainability */}
           <Panel className="p-5">
             <SectionTitle
               title="Why the model says this"
@@ -229,24 +221,18 @@ function AreaDetail() {
             </div>
           </Panel>
 
-          {/* Charts */}
           <Panel className="p-5">
             <SectionTitle title="Rainfall & soil saturation" hint="Last six hours" />
             <div className="relative mt-4">
               <Sparkline data={area.rainTrend} stroke="var(--rain)" height={140} />
               <div className="absolute inset-0">
-                <Sparkline
-                  data={area.soilTrend}
-                  stroke="var(--soil)"
-                  fill={false}
-                  height={140}
-                />
+                <Sparkline data={area.soilTrend} stroke="var(--soil)" fill={false} height={140} />
               </div>
             </div>
             <div className="mt-3 flex justify-between text-[11px] text-muted-foreground">
               <span className="inline-flex items-center gap-1.5">
                 <span className="size-1.5 rounded-full bg-rain" /> Rainfall (mm/hr) — peak{" "}
-                {Math.max(...area.rainTrend)}
+                {Math.max(...area.rainTrend, 0)}
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <span className="size-1.5 rounded-full bg-soil" /> Soil saturation (%) — now{" "}
@@ -256,7 +242,6 @@ function AreaDetail() {
           </Panel>
         </div>
 
-        {/* Propagation */}
         <section>
           <SectionTitle
             title="Upstream & downstream propagation"
@@ -273,11 +258,17 @@ function AreaDetail() {
               ) : (
                 <span className="text-xs text-muted-foreground">Headwater — no upstream link</span>
               )}
-              <ArrowRight className={cn("size-4", incoming ? "text-severe" : "text-muted-foreground")} />
+              <ArrowRight
+                className={cn("size-4", incoming ? "text-severe" : "text-muted-foreground")}
+              />
               <div
                 className={cn(
                   "min-w-44 rounded-lg border p-3",
-                  tier === "severe" ? "tier-severe" : tier === "watch" ? "tier-watch" : "tier-normal",
+                  tier === "severe"
+                    ? "tier-severe"
+                    : tier === "watch"
+                      ? "tier-watch"
+                      : "tier-normal",
                 )}
               >
                 <p className="text-sm font-semibold">{area.name}</p>
@@ -310,8 +301,8 @@ function AreaDetail() {
         </div>
 
         <p className="text-[11px] text-muted-foreground">
-          <Explain hint="All figures on this page are simulated for demonstration and are not a real forecast.">
-            <span>Simulated data</span>
+          <Explain hint="Risk scores are produced by the himvaah backend from the latest sensor readings and upstream state.">
+            <span>Live risk score</span>
           </Explain>
         </p>
       </div>

@@ -1,10 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Camera, CheckCircle2, Crosshair, ImageUp, ShieldCheck } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { Panel, SectionTitle } from "@/components/app/primitives";
-import { communityReports } from "@/lib/mock-data";
+import { useAppState } from "@/lib/app-state";
+import { API_URL } from "@/lib/api";
+import { useAreas, useReports, useSubmitReport, useVerifyReport } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/report")({
@@ -39,9 +41,64 @@ const sevClass: Record<string, string> = {
 };
 
 function ReportGroundConditions() {
+  const { user } = useAppState();
+  const { areas } = useAreas();
+  const { data: reports = [] } = useReports();
+  const submit = useSubmitReport();
+  const verify = useVerifyReport();
+
+  const [areaId, setAreaId] = useState("");
   const [severity, setSeverity] = useState<string>("Rising");
-  const [photo, setPhoto] = useState<string | null>(null);
   const [note, setNote] = useState("");
+  const [coords, setCoords] = useState<{ lat: number; lng: number; acc: number } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!areaId && areas.length) setAreaId(areas[0]!.id);
+  }, [areas, areaId]);
+
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (p) =>
+        setCoords({
+          lat: p.coords.latitude,
+          lng: p.coords.longitude,
+          acc: Math.round(p.coords.accuracy),
+        }),
+      () => {},
+      { enableHighAccuracy: true, timeout: 8000 },
+    );
+  }, []);
+
+  const canVerify = user?.role === "officer" || user?.role === "admin";
+
+  async function onSubmit() {
+    const form = new FormData();
+    form.set("areaId", areaId);
+    form.set("severity", severity);
+    if (note.trim()) form.set("note", note.trim());
+    if (coords) {
+      form.set("lat", String(coords.lat));
+      form.set("lng", String(coords.lng));
+      form.set("accuracy", String(coords.acc));
+    }
+    const file = fileRef.current?.files?.[0];
+    if (file) form.set("photo", file);
+
+    try {
+      await submit.mutateAsync(form);
+      toast.success("Report submitted", {
+        description: `${severity} · sent to the district control room for verification.`,
+      });
+      setNote("");
+      setFileName(null);
+      if (fileRef.current) fileRef.current.value = "";
+    } catch (err) {
+      toast.error("Could not submit report", { description: (err as Error).message });
+    }
+  }
 
   return (
     <AppShell>
@@ -57,29 +114,47 @@ function ReportGroundConditions() {
         </header>
 
         <Panel className="space-y-5 p-5">
+          <div>
+            <p className="mb-2 text-xs tracking-wide text-muted-foreground uppercase">
+              Which area?
+            </p>
+            <select
+              value={areaId}
+              onChange={(e) => setAreaId(e.target.value)}
+              className="h-11 w-full rounded-xl border border-hairline bg-surface-2/60 px-3 text-sm outline-none"
+            >
+              {areas.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <label className="block cursor-pointer">
             <input
+              ref={fileRef}
               type="file"
               accept="image/*"
               className="sr-only"
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (f) {
-                  setPhoto(f.name);
-                  toast.success("Photo attached", { description: "Location captured from EXIF." });
+                  setFileName(f.name);
+                  toast.success("Photo attached");
                 }
               }}
             />
             <div
               className={cn(
                 "grid h-40 place-items-center rounded-xl border border-dashed border-hairline bg-surface-2/40 text-center transition-colors hover:bg-surface-2/70",
-                photo && "border-normal/50",
+                fileName && "border-normal/50",
               )}
             >
-              {photo ? (
+              {fileName ? (
                 <div className="space-y-1">
                   <CheckCircle2 className="mx-auto size-6 text-normal" />
-                  <p className="text-sm font-medium">{photo}</p>
+                  <p className="text-sm font-medium">{fileName}</p>
                   <p className="text-xs text-muted-foreground">Tap to replace</p>
                 </div>
               ) : (
@@ -87,14 +162,13 @@ function ReportGroundConditions() {
                   <ImageUp className="mx-auto size-6 text-muted-foreground" />
                   <p className="text-sm font-medium">Take or upload a photo</p>
                   <p className="text-xs text-muted-foreground">
-                    Your location is attached automatically
+                    Optional — your location is attached automatically
                   </p>
                 </div>
               )}
             </div>
           </label>
 
-          {/* Captured location */}
           <div className="flex items-center gap-4 rounded-xl border border-hairline bg-surface-2/40 p-3">
             <div className="relative size-20 shrink-0 overflow-hidden rounded-lg border border-hairline bg-surface">
               <svg viewBox="0 0 100 100" className="size-full" aria-hidden>
@@ -104,23 +178,27 @@ function ReportGroundConditions() {
                     <line x1="0" y1={(i + 1) * 10} x2="100" y2={(i + 1) * 10} />
                   </g>
                 ))}
-                <path
-                  d="M 0 30 C 30 45, 55 40, 100 68"
-                  fill="none"
-                  stroke="var(--rain)"
-                  strokeOpacity="0.6"
-                  strokeWidth="2"
-                />
                 <circle cx="50" cy="50" r="16" fill="var(--rain)" fillOpacity="0.14" />
                 <circle cx="50" cy="50" r="3.5" fill="var(--rain)" />
               </svg>
             </div>
             <div className="min-w-0 text-xs">
               <p className="inline-flex items-center gap-1.5 font-medium">
-                <Crosshair className="size-3.5 text-rain" /> Location captured
+                <Crosshair className="size-3.5 text-rain" />
+                {coords ? "Location captured" : "Waiting for location…"}
               </p>
-              <p className="num mt-1 text-muted-foreground">30.4468° N, 79.6702° E</p>
-              <p className="text-muted-foreground">Accuracy ±9 m · Raini Village, Chamoli</p>
+              {coords ? (
+                <>
+                  <p className="num mt-1 text-muted-foreground">
+                    {coords.lat.toFixed(4)}° N, {coords.lng.toFixed(4)}° E
+                  </p>
+                  <p className="text-muted-foreground">Accuracy ±{coords.acc} m</p>
+                </>
+              ) : (
+                <p className="mt-1 text-muted-foreground">
+                  Allow location access, or submit without it.
+                </p>
+              )}
             </div>
           </div>
 
@@ -153,16 +231,11 @@ function ReportGroundConditions() {
           />
 
           <button
-            onClick={() => {
-              toast.success("Report submitted", {
-                description: `${severity} · sent to the district control room for verification.`,
-              });
-              setNote("");
-              setPhoto(null);
-            }}
-            className="flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-primary text-base font-semibold text-primary-foreground"
+            onClick={onSubmit}
+            disabled={submit.isPending || !areaId}
+            className="flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-primary text-base font-semibold text-primary-foreground disabled:opacity-50"
           >
-            <Camera className="size-5" /> Submit report
+            <Camera className="size-5" /> {submit.isPending ? "Submitting…" : "Submit report"}
           </button>
         </Panel>
 
@@ -172,10 +245,18 @@ function ReportGroundConditions() {
             hint="Verified by district officers where marked"
           />
           <div className="space-y-2">
-            {communityReports.map((r) => (
+            {reports.map((r) => (
               <Panel key={r.id} className="flex items-start gap-3 p-3">
-                <div className="grid size-14 shrink-0 place-items-center rounded-lg border border-hairline bg-surface-2">
-                  <Camera className="size-4 text-muted-foreground" />
+                <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-lg border border-hairline bg-surface-2">
+                  {r.photoUrl ? (
+                    <img
+                      src={`${API_URL}${r.photoUrl}`}
+                      alt=""
+                      className="size-full object-cover"
+                    />
+                  ) : (
+                    <Camera className="size-4 text-muted-foreground" />
+                  )}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
@@ -192,13 +273,24 @@ function ReportGroundConditions() {
                       <span className="inline-flex items-center gap-1 text-[10px] text-normal">
                         <ShieldCheck className="size-3" /> Verified
                       </span>
+                    ) : canVerify ? (
+                      <button
+                        onClick={() => verify.mutate({ id: r.id, verified: true })}
+                        className="text-[10px] text-primary hover:underline"
+                      >
+                        Mark verified
+                      </button>
                     ) : (
                       <span className="text-[10px] text-muted-foreground">Awaiting review</span>
                     )}
                   </div>
-                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{r.note}</p>
+                  {r.note ? (
+                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{r.note}</p>
+                  ) : null}
                   <p className="num mt-1 text-[11px] text-muted-foreground">
-                    {r.reporter} · {r.minutesAgo} min ago · {r.coords} ±{r.accuracy} m
+                    {r.reporter} · {r.minutesAgo} min ago
+                    {r.coords ? ` · ${r.coords}` : ""}
+                    {r.accuracy != null ? ` ±${r.accuracy} m` : ""}
                   </p>
                 </div>
               </Panel>

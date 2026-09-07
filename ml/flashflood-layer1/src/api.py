@@ -11,10 +11,14 @@ Run:
 Then it listens on http://localhost:5001
 
 Endpoints:
-    GET  /health           -> {"status": "ok"}
-    POST /predict           -> flood risk assessment for one day/region
+    GET  /health            -> {"status": "ok"}
+    POST /predict           -> flood risk for one day/region (builds features from
+                               this service's own rolling history store)
+    POST /predict/vector    -> flood risk from a ready-made 13-feature vector
+                               (stateless; the caller computed the features)
 """
 
+import pandas as pd
 from flask import Flask, request, jsonify
 from predict import FloodRiskPredictor
 
@@ -25,7 +29,10 @@ predictor = FloodRiskPredictor()
 
 @app.route("/")
 def index():
-    return {"status": "flashflood-layer1 API running", "endpoints": ["/health", "/predict"]}
+    return {
+        "status": "flashflood-layer1 API running",
+        "endpoints": ["/health", "/predict", "/predict/vector"],
+    }
 
 @app.route("/health", methods=["GET"])
 def health():
@@ -63,6 +70,47 @@ def predict():
         # Anything unexpected -- log it server-side in a real deployment,
         # but don't leak internal details to the caller.
         app.logger.exception("Unexpected error in /predict")
+        return jsonify({"error": "Internal server error"}), 500
+
+
+@app.route("/predict/vector", methods=["POST"])
+def predict_vector():
+    """
+    Score a ready-made feature vector. The caller (the Node backend) computes
+    the 13 model features from its own per-watershed sensor history and sends
+    them here, so this service stays stateless and works for any region id.
+
+    Body: { "features": { <all 13 feature_columns>: <number>, ... },
+            "region_id": "<optional, for the response only>" }
+    """
+    body = request.get_json(force=True, silent=True)
+    if body is None or "features" not in body:
+        return jsonify({"error": "Body must be JSON with a 'features' object"}), 400
+
+    feats = body["features"]
+    missing = [c for c in predictor.feature_columns if c not in feats]
+    if missing:
+        return jsonify({"error": f"Missing feature(s): {missing}"}), 400
+
+    try:
+        X = pd.DataFrame([{c: float(feats[c]) for c in predictor.feature_columns}])[
+            predictor.feature_columns
+        ]
+        raw_proba = float(predictor.model.predict_proba(X)[:, 1][0])
+        calibrated_proba = float(predictor.calibrator.predict([raw_proba])[0])
+        return jsonify(
+            {
+                "region_id": body.get("region_id"),
+                "raw_probability": round(raw_proba, 4),
+                "calibrated_probability": round(calibrated_proba, 4),
+                "flood_risk": bool(calibrated_proba >= predictor.calibrated_threshold),
+                "threshold_used": predictor.calibrated_threshold,
+            }
+        ), 200
+    except (ValueError, TypeError) as e:
+        return jsonify({"error": f"Bad feature value: {e}"}), 400
+    except Exception:
+        app.logger.exception("Unexpected error in /predict/vector")
         return jsonify({"error": "Internal server error"}), 500
 
 

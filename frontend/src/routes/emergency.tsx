@@ -1,9 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Footprints, Navigation, Phone, ShieldAlert } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { Panel, TierChip } from "@/components/app/primitives";
-import { areasByDistrict, districts, tierFor } from "@/lib/mock-data";
+import { Loading } from "@/components/app/Loading";
+import { useAreas, useDistricts } from "@/lib/queries";
+import { rankByScore, tierFor } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/emergency")({
@@ -34,9 +36,29 @@ const CHECKLIST = [
 ];
 
 function EmergencyInfo() {
-  const [districtId, setDistrictId] = useState(districts[0]!.id);
-  const district = districts.find((d) => d.id === districtId)!;
-  const area = areasByDistrict(districtId).sort((a, b) => b.score - a.score)[0]!;
+  const { districts, isLoading: dLoading } = useDistricts();
+  const { areas, isLoading: aLoading } = useAreas();
+  const [districtId, setDistrictId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!districtId && districts.length) setDistrictId(districts[0]!.id);
+  }, [districts, districtId]);
+
+  if (dLoading || aLoading || !districtId)
+    return (
+      <AppShell>
+        <Loading label="Loading emergency info…" />
+      </AppShell>
+    );
+
+  const district = districts.find((d) => d.id === districtId);
+  const area = rankByScore(areas.filter((a) => a.districtId === districtId))[0];
+  if (!district || !area)
+    return (
+      <AppShell>
+        <Loading label="No data for this district" error />
+      </AppShell>
+    );
   const tier = tierFor(area.score);
 
   return (

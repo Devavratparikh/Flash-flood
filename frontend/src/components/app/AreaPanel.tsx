@@ -7,7 +7,7 @@ import {
   Sparkline,
   TierChip,
 } from "@/components/app/primitives";
-import { tierFor, type Area } from "@/lib/mock-data";
+import { tierFor, type Area } from "@/lib/types";
 
 export function AreaPanel({ area }: { area: Area }) {
   const tier = tierFor(area.score);

@@ -24,24 +24,54 @@ export const Route = createFileRoute("/login")({
 });
 
 const ROLES = [
-  { key: "resident", label: "Resident", icon: User, desc: "Simple risk view and safety guidance" },
+  {
+    key: "resident",
+    label: "Resident",
+    icon: User,
+    desc: "Simple risk view and safety guidance",
+    email: "resident@himvaah.in",
+  },
   {
     key: "officer",
     label: "District Officer",
     icon: Building2,
     desc: "Full data, drivers and broadcast tools",
+    email: "officer@himvaah.in",
   },
-  { key: "admin", label: "NDRF Admin", icon: Shield, desc: "Region-wide model and response ops" },
+  {
+    key: "admin",
+    label: "NDRF Admin",
+    icon: Shield,
+    desc: "Region-wide model and response ops",
+    email: "admin@himvaah.in",
+  },
 ] as const;
 
 function Login() {
   const [role, setRole] = useState<(typeof ROLES)[number]["key"]>("officer");
+  const [email, setEmail] = useState("officer@himvaah.in");
+  const [password, setPassword] = useState("demo1234");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
-  const { setView } = useAppState();
+  const { login } = useAppState();
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      await login(email, password);
+      navigate({ to: "/" });
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
-      {/* Terrain visual */}
       <div className="relative hidden overflow-hidden border-r border-hairline bg-surface lg:block">
         <svg
           viewBox="0 0 100 100"
@@ -49,7 +79,6 @@ function Login() {
           className="absolute inset-0 size-full"
           aria-hidden
         >
-          {/* contour lines */}
           {Array.from({ length: 30 }).map((_, i) => (
             <path
               key={i}
@@ -59,7 +88,6 @@ function Login() {
               strokeWidth="0.22"
             />
           ))}
-          {/* ridge silhouettes */}
           <path
             d="M -5 78 L 14 52 L 26 64 L 42 34 L 58 58 L 72 42 L 88 62 L 105 48 L 105 105 L -5 105 Z"
             fill="oklch(1 0 0 / 0.028)"
@@ -68,7 +96,6 @@ function Login() {
             d="M -5 92 L 18 70 L 34 82 L 50 60 L 68 78 L 84 66 L 105 84 L 105 105 L -5 105 Z"
             fill="oklch(1 0 0 / 0.035)"
           />
-          {/* river + tributaries */}
           <path
             d="M 34 -2 C 40 22, 34 40, 46 58 S 62 82, 60 104"
             fill="none"
@@ -91,8 +118,6 @@ function Login() {
             strokeWidth="0.4"
           />
         </svg>
-
-        {/* rainfall overlay */}
         <div className="absolute inset-0">
           {Array.from({ length: 44 }).map((_, i) => (
             <span
@@ -120,7 +145,6 @@ function Login() {
         </div>
       </div>
 
-      {/* Form */}
       <div className="flex items-center justify-center px-6 py-14">
         <div className="w-full max-w-sm">
           <div className="flex items-center gap-2.5">
@@ -137,7 +161,7 @@ function Login() {
 
           <h1 className="display mt-8 text-2xl font-bold">Sign in</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Access is logged. Use your assigned district credentials.
+            Demo accounts are seeded — pick a role to prefill.
           </p>
 
           <div className="mt-6 space-y-2">
@@ -147,7 +171,11 @@ function Login() {
               return (
                 <button
                   key={r.key}
-                  onClick={() => setRole(r.key)}
+                  onClick={() => {
+                    setRole(r.key);
+                    setEmail(r.email);
+                    setPassword("demo1234");
+                  }}
                   className={cn(
                     "flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors",
                     active
@@ -155,7 +183,9 @@ function Login() {
                       : "border-hairline hover:bg-surface-2/60",
                   )}
                 >
-                  <Icon className={cn("size-4", active ? "text-primary" : "text-muted-foreground")} />
+                  <Icon
+                    className={cn("size-4", active ? "text-primary" : "text-muted-foreground")}
+                  />
                   <span className="min-w-0">
                     <span className="block text-sm font-medium">{r.label}</span>
                     <span className="block truncate text-xs text-muted-foreground">{r.desc}</span>
@@ -165,53 +195,35 @@ function Login() {
             })}
           </div>
 
-          <form
-            className="mt-6 space-y-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              setView(role === "resident" ? "resident" : "officer");
-              navigate({ to: "/" });
-            }}
-          >
+          <form className="mt-6 space-y-3" onSubmit={onSubmit}>
             <input
               type="email"
               required
-              placeholder="Official email or mobile"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="Official email"
               className="h-11 w-full rounded-lg border border-hairline bg-surface-2/60 px-3 text-sm outline-none focus:border-ring/60 focus:ring-2 focus:ring-ring/20"
             />
             <input
               type="password"
               required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
               placeholder="Password"
               className="h-11 w-full rounded-lg border border-hairline bg-surface-2/60 px-3 text-sm outline-none focus:border-ring/60 focus:ring-2 focus:ring-ring/20"
             />
+            {error ? <p className="text-xs text-severe">{error}</p> : null}
             <button
               type="submit"
-              className="h-11 w-full rounded-lg bg-primary text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+              disabled={busy}
+              className="h-11 w-full rounded-lg bg-primary text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
             >
-              Continue
+              {busy ? "Signing in…" : "Continue"}
             </button>
           </form>
 
-          <div className="my-5 flex items-center gap-3 text-[11px] text-muted-foreground">
-            <span className="h-px flex-1 bg-hairline" /> or continue with{" "}
-            <span className="h-px flex-1 bg-hairline" />
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            {["Google", "NIC SSO"].map((p) => (
-              <button
-                key={p}
-                onClick={() => navigate({ to: "/" })}
-                className="h-10 rounded-lg border border-hairline bg-surface-2/60 text-sm hover:bg-surface-2"
-              >
-                {p}
-              </button>
-            ))}
-          </div>
-
           <p className="mt-8 text-[11px] leading-relaxed text-muted-foreground">
-            Demonstration build with simulated data. Do not use for real emergency decisions.
+            Demonstration build with simulated sensor data. Do not use for real emergency decisions.
           </p>
         </div>
       </div>

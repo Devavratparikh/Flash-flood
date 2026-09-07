@@ -41,12 +41,13 @@ onto whichever watershed they've registered in. Key differentiators from existin
    Incoming readings are aligned to the correct micro-watershed and used to update
    a rolling 3-7 day soil-saturation index per watershed.
 
-3. PREDICTION (Python/FastAPI service, called by the Node backend over REST)
-   Layer 1 - static susceptibility (Random Forest/XGBoost): how flood-prone is this
-             watershed structurally (slope, soil, drainage, history)?
-   Layer 2 - dynamic trigger (LSTM): given recent rainfall + soil saturation, what's
-             the likely water-level rise in the next 1-6 hours?
-   -> combined into a 0-100 risk score + confidence + top contributing drivers.
+3. PREDICTION (Python/Flask service, called by the Node backend over REST)
+   Layer 1 - XGBoost nowcast: given rainfall + antecedent soil/reservoir state,
+             what's the calibrated flash-flood probability? (wired in — the
+             backend computes the model's features from sensor history)
+   Layer 4 - Sentinel-1 SAR U-Net: post-event flood-extent validation (trained;
+             shown on the Model Insights page)
+   -> Layer 1 probability -> 0-100 risk score + confidence + driver breakdown.
 
 4. STORAGE
    Risk scores are stored in PostgreSQL/PostGIS (spatial queries: which watershed is
@@ -72,20 +73,20 @@ onto whichever watershed they've registered in. Key differentiators from existin
 himvaah/
 |-- README.md
 |-- .gitignore
-|-- frontend/     React + Three.js dashboard (built)
-|-- backend/      Node.js + Express API (not built yet)
-|-- database/     PostgreSQL/PostGIS schema, migrations, seed data (not built yet)
-`-- ml/           Python + FastAPI prediction service (not built yet)
+|-- frontend/     React dashboard, wired to the backend API (built)
+|-- backend/      Node.js + Express API, Socket.IO, BullMQ queue (built)
+|-- database/     PostgreSQL schema + migrations (built)
+`-- ml/           Python + Flask prediction service (Layer 1 + Layer 4 trained)
 ```
 
 ---
 
 ## Tech stack
 
-**Frontend** — React (Vite), Three.js (3D terrain + OrbitControls), Recharts, plain CSS.
-**Backend** — Node.js + Express, Redis + BullMQ (job queue), Socket.IO (real-time push).
-**Database** — PostgreSQL + PostGIS (spatial queries for "which watershed is this in?").
-**ML** — Python + FastAPI (isolated microservice), scikit-learn/XGBoost + TensorFlow/Keras (LSTM).
+**Frontend** — React (TanStack Start), Tailwind, TanStack Query, CSS-3D terrain map, socket.io-client.
+**Backend** — Node.js + Express, `pg`, JWT demo auth, Redis + BullMQ (job queue), Socket.IO (real-time push).
+**Database** — PostgreSQL (17-table schema modeled on the frontend data shapes; PostGIS planned for Phase 4).
+**ML** — Python + Flask (isolated microservice): Layer 1 XGBoost nowcast, Layer 4 Sentinel-1 SAR U-Net.
 
 The application layer (frontend + backend) is JS end-to-end; ML is an isolated Python
 microservice reached over a REST API — a standard polyglot-microservice pattern that keeps
@@ -93,10 +94,12 @@ the fast-moving app code and the scientific-library-dependent ML code cleanly se
 
 ## Phases
 
-1. **Phase 1 (current)** — Frontend with mocked data; internal college hackathon deliverable.
-2. **Phase 2** — Database schema + backend API live; frontend swaps mock data for real calls.
-3. **Phase 3** — ML service live; models trained on real DEM/rainfall/historical data.
-4. **Phase 4** — Real terrain/satellite data, offline SMS fallback, community reporting.
+1. **Phase 1 (done)** — Frontend with mocked data; internal college hackathon deliverable.
+2. **Phase 2 (current)** — Database schema + backend API live; frontend calls the API;
+   demo auth, Socket.IO live updates, BullMQ ingestion queue, Node risk heuristic with
+   optional ML proxy.
+3. **Phase 3** — ML service wired in by default; models trained on real DEM/rainfall/historical data.
+4. **Phase 4** — Real terrain/satellite data, real SMS/push delivery, PostGIS spatial lookup.
 
 ---
 
@@ -111,9 +114,54 @@ npm run dev
 Opens a local dev server (usually `http://localhost:5173`) with hot-reload.
 
 ```bash
-npm run build    # production build, output to frontend/dist/
+npm run build    # production build
 npm run preview  # serve that build locally to sanity-check it
 ```
 
-`backend/`, `database/`, and `ml/` will each get their own run instructions added here
-once they exist.
+The frontend reads `VITE_API_URL` (default `http://localhost:4000`) from `frontend/.env`.
+
+## Running the database + backend
+
+Requires **PostgreSQL** running locally. **Redis** is optional — without it the
+backend recomputes risk synchronously instead of via the BullMQ queue.
+
+```bash
+cd backend
+npm install
+cp .env.example .env          # then edit DATABASE_URL for your Postgres
+createdb himvaah               # or: psql -c "CREATE DATABASE himvaah"
+
+npm run db:reset               # drop + recreate schema, then seed demo data
+npm run dev                    # API on http://localhost:4000
+npm run worker                 # (optional, separate terminal) BullMQ worker — needs Redis
+```
+
+`npm run db:reset` is `npm run migrate -- --reset && npm run seed`. The seed
+ports every value from `frontend/src/lib/mock-data.ts`, so the dashboard looks
+identical after switching from mock data to the API.
+
+**Demo logins** (all password `demo1234`): `resident@himvaah.in`,
+`officer@himvaah.in`, `admin@himvaah.in`.
+
+See `backend/README.md` for the full endpoint list and the risk-scoring model.
+
+## Python ML service (Layer 1)
+
+`backend/.env` ships with `RISK_ENGINE=ml-layer1`, so risk scores come from the
+Layer-1 XGBoost model. Run its Flask service in a **third terminal**:
+
+```bash
+pip install flask pandas scikit-learn xgboost joblib
+cd ml/flashflood-layer1
+python src/api.py             # Flask on http://localhost:5001
+```
+
+The Node backend rolls each area's sensor history into the model's 13 features,
+calls `POST /predict/vector`, maps the calibrated flood probability onto the
+0-100 scale and blends it 70/30 with the heuristic. If the service isn't
+running the backend logs a warning and uses the pure heuristic — the app still
+works. Set `RISK_ENGINE=heuristic` to skip Python entirely.
+
+Signed in as **NDRF Admin**, the **Sensor Control** page (`/control`) adjusts a
+watershed's rainfall / soil / reservoir inputs and re-scores it through the
+model live — the new score pushes to every open dashboard over Socket.IO.

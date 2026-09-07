@@ -16,7 +16,7 @@ import {
   type Area,
   type Driver,
   type Tier,
-} from "@/lib/mock-data";
+} from "@/lib/types";
 
 /* ---------------------------------- Card ---------------------------------- */
 

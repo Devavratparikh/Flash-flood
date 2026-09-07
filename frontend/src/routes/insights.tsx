@@ -3,7 +3,9 @@ import { useState } from "react";
 import { Layers, Satellite } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { Panel, SectionTitle } from "@/components/app/primitives";
-import { areas, districtById, featureImportance, systemStats, tierFor } from "@/lib/mock-data";
+import { Loading } from "@/components/app/Loading";
+import { useDistricts, useInsights, useOverview } from "@/lib/queries";
+import { tierFor, type Area } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/insights")({
@@ -58,7 +60,7 @@ function ConfidenceGauge({ value }: { value: number }) {
   );
 }
 
-function WatershedGraph() {
+function WatershedGraph({ areas }: { areas: Area[] }) {
   const nodes = areas.map((a, i) => ({
     ...a,
     gx: 12 + (i % 4) * 26,
@@ -113,6 +115,19 @@ function WatershedGraph() {
 
 function ModelInsights() {
   const [after, setAfter] = useState(true);
+  const { data: insights, isLoading } = useInsights();
+  const { areas } = useOverview();
+  const { districtById } = useDistricts();
+
+  if (isLoading || !insights)
+    return (
+      <AppShell>
+        <Loading label="Loading model insights…" />
+      </AppShell>
+    );
+
+  const { featureImportance, model } = insights;
+  const peak = areas.length ? areas.reduce((m, a) => (a.score > m.score ? a : m)) : undefined;
 
   return (
     <AppShell>
@@ -126,10 +141,10 @@ function ModelInsights() {
 
         <div className="grid gap-4 lg:grid-cols-3">
           <Panel className="flex flex-col items-center justify-center p-5">
-            <ConfidenceGauge value={systemStats.modelConfidence} />
+            <ConfidenceGauge value={model.confidence} />
             <p className="mt-4 text-center text-xs leading-relaxed text-muted-foreground">
-              {systemStats.modelVersion} · calibrated against 214 historical events. Confidence
-              drops with forecast distance and sparse gauge coverage.
+              {model.version} · calibrated against {model.eventsCalibrated} historical events.
+              Confidence drops with forecast distance and sparse gauge coverage.
             </p>
           </Panel>
 
@@ -229,15 +244,13 @@ function ModelInsights() {
               title="Watershed propagation"
               hint="Nodes are areas, edges follow drainage downstream"
             />
-            <WatershedGraph />
-            <p className="mt-1 inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <Layers className="size-3.5" /> Pulsing edges carry risk toward a high-scoring node.
-              Largest halo:{" "}
-              {
-                areas.reduce((m, a) => (a.score > m.score ? a : m)).name
-              }{" "}
-              ({districtById(areas.reduce((m, a) => (a.score > m.score ? a : m)).districtId)?.name})
-            </p>
+            <WatershedGraph areas={areas} />
+            {peak ? (
+              <p className="mt-1 inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <Layers className="size-3.5" /> Pulsing edges carry risk toward a high-scoring node.
+                Largest halo: {peak.name} ({districtById(peak.districtId)?.name})
+              </p>
+            ) : null}
           </Panel>
         </div>
       </div>

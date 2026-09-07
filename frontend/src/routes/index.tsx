@@ -1,16 +1,18 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { AlertTriangle, ArrowRight, Droplets, Eye, LifeBuoy, MapPin, Radio } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
-import { AlertRow, Panel, RiskScore, SectionTitle, TierChip, Sparkline } from "@/components/app/primitives";
-import { useAppState } from "@/lib/app-state";
 import {
-  areasByDistrict,
-  districtById,
-  districts,
-  rankedAreas,
-  systemStats,
-  tierFor,
-} from "@/lib/mock-data";
+  AlertRow,
+  Panel,
+  RiskScore,
+  SectionTitle,
+  TierChip,
+  Sparkline,
+} from "@/components/app/primitives";
+import { Loading } from "@/components/app/Loading";
+import { useAppState } from "@/lib/app-state";
+import { useDistricts, useOverview } from "@/lib/queries";
+import { rankByScore, tierFor } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/")({
@@ -82,8 +84,13 @@ function StatTile({
 }
 
 function ResidentHome() {
-  const top = rankedAreas[0]!;
+  const { ranked, isLoading } = useOverview();
+  const { districtById } = useDistricts();
+  const top = ranked[0];
+
+  if (isLoading || !top) return <Loading label="Loading current risk…" />;
   const tier = tierFor(top.score);
+
   return (
     <div className="mx-auto max-w-2xl space-y-5">
       <Panel className="p-6 text-center" alert={tier === "severe"}>
@@ -115,7 +122,7 @@ function ResidentHome() {
       <div>
         <SectionTitle title="Areas near you" hint="Simple status, updated every few minutes" />
         <div className="space-y-2">
-          {rankedAreas.slice(0, 6).map((a) => {
+          {ranked.slice(0, 6).map((a) => {
             const t = tierFor(a.score);
             return (
               <Link
@@ -147,155 +154,145 @@ function ResidentHome() {
   );
 }
 
-function Home() {
-  const { view } = useAppState();
+function OfficerHome() {
+  const { stats, ranked, isLoading, isError } = useOverview();
+  const { districts, districtById } = useDistricts();
+
+  if (isLoading) return <Loading label="Loading national overview…" />;
+  if (isError || !stats)
+    return <Loading label="Backend unavailable — is the API running on :4000?" error />;
 
   return (
-    <AppShell>
-      {view === "resident" ? (
-        <ResidentHome />
-      ) : (
-        <div className="mx-auto max-w-7xl space-y-8">
-          <header className="animate-rise">
-            <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
-              National / State overview
-            </p>
-            <h1 className="display mt-1 text-3xl font-bold sm:text-4xl">
-              Flash flood risk, right now
-            </h1>
-          </header>
+    <div className="mx-auto max-w-7xl space-y-8">
+      <header className="animate-rise">
+        <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
+          National / State overview
+        </p>
+        <h1 className="display mt-1 text-3xl font-bold sm:text-4xl">Flash flood risk, right now</h1>
+      </header>
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <StatTile
-              label="Districts monitored"
-              value={systemStats.districtsMonitored}
-              sub={`${systemStats.areasMonitored} sub-areas under watch`}
-              icon={Eye}
-            />
-            <StatTile
-              label="Act Now alerts"
-              value={systemStats.actNow}
-              sub="Immediate evacuation advised"
-              tone="severe"
-              icon={AlertTriangle}
-            />
-            <StatTile
-              label="Watch areas"
-              value={systemStats.watch}
-              sub="Prepare to move, monitor closely"
-              tone="watch"
-              icon={Droplets}
-            />
-            <StatTile
-              label="Model refresh"
-              value={systemStats.lastRefresh}
-              sub={`${systemStats.modelVersion} · confidence ${systemStats.modelConfidence}%`}
-              tone="normal"
-              icon={Radio}
-            />
-          </div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <StatTile
+          label="Districts monitored"
+          value={stats.districtsMonitored}
+          sub={`${stats.areasMonitored} sub-areas under watch`}
+          icon={Eye}
+        />
+        <StatTile
+          label="Act Now alerts"
+          value={stats.actNow}
+          sub="Immediate evacuation advised"
+          tone="severe"
+          icon={AlertTriangle}
+        />
+        <StatTile
+          label="Watch areas"
+          value={stats.watch}
+          sub="Prepare to move, monitor closely"
+          tone="watch"
+          icon={Droplets}
+        />
+        <StatTile
+          label="Model refresh"
+          value={stats.lastRefresh}
+          sub={`${stats.modelVersion} · confidence ${stats.modelConfidence}%`}
+          tone="normal"
+          icon={Radio}
+        />
+      </div>
 
-          <section>
-            <SectionTitle
-              title="Districts"
-              hint="Highest risk area per district and its dominant driver"
-              right={
-                <Link
-                  to="/districts"
-                  className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+      <section>
+        <SectionTitle
+          title="Districts"
+          hint="Highest risk area per district and its dominant driver"
+          right={
+            <Link
+              to="/districts"
+              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+            >
+              Open explorer <ArrowRight className="size-3" />
+            </Link>
+          }
+        />
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {districts.map((d) => {
+            const list = ranked.filter((a) => a.districtId === d.id);
+            const worst = list[0];
+            if (!worst) return null;
+            const tier = tierFor(worst.score);
+            return (
+              <Link key={d.id} to="/districts" search={{ d: d.id }} className="block">
+                <Panel
+                  className="h-full p-4 transition-transform hover:-translate-y-0.5"
+                  alert={tier === "severe"}
                 >
-                  Open explorer <ArrowRight className="size-3" />
-                </Link>
-              }
-            />
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              {districts.map((d) => {
-                const list = areasByDistrict(d.id).sort((a, b) => b.score - a.score);
-                const worst = list[0]!;
-                const tier = tierFor(worst.score);
-                return (
-                  <Link
-                    key={d.id}
-                    to="/districts"
-                    search={{ d: d.id }}
-                    className="block"
-                  >
-                    <Panel
-                      className="h-full p-4 transition-transform hover:-translate-y-0.5"
-                      alert={tier === "severe"}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <p className="display text-lg font-semibold">{d.name}</p>
-                          <p className="text-[11px] text-muted-foreground">
-                            {d.state} · {d.basin}
-                          </p>
-                        </div>
-                        <TierChip tier={tier} dot={false} />
-                      </div>
-                      <div className="mt-4 flex items-end justify-between gap-3">
-                        <RiskScore score={worst.score} size="lg" />
-                        <Sparkline
-                          data={worst.rainTrend}
-                          className="max-w-[96px] flex-1"
-                          height={40}
-                        />
-                      </div>
-                      <p className="mt-3 text-xs text-muted-foreground">
-                        Peak at <span className="text-foreground">{worst.name}</span> ·{" "}
-                        {worst.dominantDriver}
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="display text-lg font-semibold">{d.name}</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {d.state} · {d.basin}
                       </p>
-                      <div className="mt-3 flex gap-1">
-                        {list.map((a) => {
-                          const t = tierFor(a.score);
-                          return (
-                            <span
-                              key={a.id}
-                              className={cn(
-                                "h-1 flex-1 rounded-full transition-colors duration-500",
-                                t === "severe"
-                                  ? "bg-severe"
-                                  : t === "watch"
-                                    ? "bg-watch"
-                                    : "bg-normal",
-                              )}
-                            />
-                          );
-                        })}
-                      </div>
-                    </Panel>
-                  </Link>
-                );
-              })}
-            </div>
-          </section>
-
-          <section>
-            <SectionTitle
-              title="Active alerts — ranked by risk"
-              hint="Every at-risk area across all districts, highest score first"
-              right={
-                <Link
-                  to="/alerts"
-                  className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                >
-                  Full feed <ArrowRight className="size-3" />
-                </Link>
-              }
-            />
-            <Panel className="divide-y divide-hairline p-1.5">
-              {rankedAreas.map((a, i) => (
-                <AlertRow
-                  key={a.id}
-                  area={a}
-                  rank={i + 1}
-                  districtName={districtById(a.districtId)?.name ?? ""}
-                />
-              ))}
-            </Panel>
-          </section>
+                    </div>
+                    <TierChip tier={tier} dot={false} />
+                  </div>
+                  <div className="mt-4 flex items-end justify-between gap-3">
+                    <RiskScore score={worst.score} size="lg" />
+                    <Sparkline data={worst.rainTrend} className="max-w-[96px] flex-1" height={40} />
+                  </div>
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    Peak at <span className="text-foreground">{worst.name}</span> ·{" "}
+                    {worst.dominantDriver}
+                  </p>
+                  <div className="mt-3 flex gap-1">
+                    {list.map((a) => {
+                      const t = tierFor(a.score);
+                      return (
+                        <span
+                          key={a.id}
+                          className={cn(
+                            "h-1 flex-1 rounded-full transition-colors duration-500",
+                            t === "severe" ? "bg-severe" : t === "watch" ? "bg-watch" : "bg-normal",
+                          )}
+                        />
+                      );
+                    })}
+                  </div>
+                </Panel>
+              </Link>
+            );
+          })}
         </div>
-      )}
-    </AppShell>
+      </section>
+
+      <section>
+        <SectionTitle
+          title="Active alerts — ranked by risk"
+          hint="Every at-risk area across all districts, highest score first"
+          right={
+            <Link
+              to="/alerts"
+              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+            >
+              Full feed <ArrowRight className="size-3" />
+            </Link>
+          }
+        />
+        <Panel className="divide-y divide-hairline p-1.5">
+          {rankByScore(ranked).map((a, i) => (
+            <AlertRow
+              key={a.id}
+              area={a}
+              rank={i + 1}
+              districtName={districtById(a.districtId)?.name ?? ""}
+            />
+          ))}
+        </Panel>
+      </section>
+    </div>
   );
+}
+
+function Home() {
+  const { view } = useAppState();
+  return <AppShell>{view === "resident" ? <ResidentHome /> : <OfficerHome />}</AppShell>;
 }

@@ -6,7 +6,9 @@ import { AppShell } from "@/components/app/AppShell";
 import { TerrainMap } from "@/components/app/TerrainMap";
 import { AreaPanel } from "@/components/app/AreaPanel";
 import { Panel } from "@/components/app/primitives";
-import { areaById, areasByDistrict, districts } from "@/lib/mock-data";
+import { Loading } from "@/components/app/Loading";
+import { useAreas, useDistricts } from "@/lib/queries";
+import { rankByScore } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/districts")({
@@ -32,12 +34,29 @@ export const Route = createFileRoute("/districts")({
 function DistrictExplorer() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
-  const activeId = search.d && districts.some((d) => d.id === search.d) ? search.d : districts[0]!.id;
-  const district = districts.find((d) => d.id === activeId)!;
-  const list = areasByDistrict(activeId).sort((a, b) => b.score - a.score);
+  const { districts, isLoading: dLoading } = useDistricts();
+  const { areas, areaById, isLoading: aLoading } = useAreas();
   const [selected, setSelected] = useState<string | null>(null);
+
+  if (dLoading || aLoading)
+    return (
+      <AppShell>
+        <Loading label="Loading districts…" />
+      </AppShell>
+    );
+  if (!districts.length)
+    return (
+      <AppShell>
+        <Loading label="Backend unavailable" error />
+      </AppShell>
+    );
+
+  const activeId =
+    search.d && districts.some((d) => d.id === search.d) ? search.d : districts[0]!.id;
+  const district = districts.find((d) => d.id === activeId)!;
+  const list = rankByScore(areas.filter((a) => a.districtId === activeId));
   const selectedArea = selected ? areaById(selected) : undefined;
-  const shown: typeof selectedArea = selectedArea && selectedArea.districtId === activeId ? selectedArea : list[0];
+  const shown = selectedArea && selectedArea.districtId === activeId ? selectedArea : list[0];
 
   return (
     <AppShell>

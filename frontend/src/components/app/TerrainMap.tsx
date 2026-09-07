@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { tierFor, type Area } from "@/lib/mock-data";
+import { tierFor, type Area } from "@/lib/types";
 import { RotateCcw, Move3d } from "lucide-react";
 
 const tierColor = {

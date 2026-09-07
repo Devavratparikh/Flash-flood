@@ -1,18 +1,14 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { z } from "zod";
 import { toast } from "sonner";
 import { Bell, Check, MessageSquare, PhoneCall, Radio, Send, X } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { Panel, SectionTitle, TierChip } from "@/components/app/primitives";
-import {
-  TIER_LABEL,
-  areas,
-  broadcastLog,
-  districtById,
-  tierFor,
-  type Tier,
-} from "@/lib/mock-data";
+import { Loading } from "@/components/app/Loading";
+import { useAppState } from "@/lib/app-state";
+import { useAreas, useBroadcasts, useCreateBroadcast, useDistricts } from "@/lib/queries";
+import { TIER_LABEL, tierFor, type Tier } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/broadcast")({
@@ -38,31 +34,75 @@ export const Route = createFileRoute("/broadcast")({
 const CHANNELS = [
   { key: "Push", icon: Bell, perHead: 1 },
   { key: "SMS", icon: MessageSquare, perHead: 0.86 },
-  { key: "IVR voice call", icon: PhoneCall, perHead: 0.42 },
+  { key: "IVR voice", icon: PhoneCall, perHead: 0.42 },
 ] as const;
+
+const HINDI_PREVIEW =
+  "तुरंत ऊँचे स्थान पर जाएँ। नदी किनारे की गलियों में एक घंटे के भीतर पानी आने की संभावना है।";
 
 function BroadcastAlert() {
   const { area: preset } = Route.useSearch();
+  const { user } = useAppState();
+  const { areas, isLoading } = useAreas();
+  const { districtById } = useDistricts();
+  const { data: log = [] } = useBroadcasts();
+  const createBroadcast = useCreateBroadcast();
+
   const presetArea = areas.find((a) => a.id === preset);
-  const [selected, setSelected] = useState<string[]>(
-    presetArea ? [presetArea.id] : areas.filter((a) => tierFor(a.score) === "severe").map((a) => a.id),
-  );
-  const [tier, setTier] = useState<Tier>(presetArea ? tierFor(presetArea.score) : "severe");
-  const [message, setMessage] = useState(
-    presetArea?.actionNote ??
-      "Move to higher ground now. Riverside lanes are expected to flood within the hour.",
-  );
+  const [selected, setSelected] = useState<string[] | null>(null);
+  const [tier, setTier] = useState<Tier | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const [channels, setChannels] = useState<string[]>(["Push", "SMS"]);
   const [lang, setLang] = useState<"en" | "hi">("en");
   const [confirming, setConfirming] = useState(false);
 
+  const effSelected =
+    selected ??
+    (presetArea
+      ? [presetArea.id]
+      : areas.filter((a) => tierFor(a.score) === "severe").map((a) => a.id));
+  const effTier = tier ?? (presetArea ? tierFor(presetArea.score) : "severe");
+  const effMessage =
+    message ??
+    presetArea?.actionNote ??
+    "Move to higher ground now. Riverside lanes are expected to flood within the hour.";
+
   const population = useMemo(
-    () => areas.filter((a) => selected.includes(a.id)).reduce((s, a) => s + a.population, 0),
-    [selected],
+    () => areas.filter((a) => effSelected.includes(a.id)).reduce((s, a) => s + a.population, 0),
+    [areas, effSelected],
   );
 
   const toggle = (list: string[], v: string) =>
     list.includes(v) ? list.filter((x) => x !== v) : [...list, v];
+
+  const canSend =
+    (user?.role === "officer" || user?.role === "admin") && effSelected.length && channels.length;
+
+  async function send() {
+    try {
+      await createBroadcast.mutateAsync({
+        tier: effTier,
+        message: effMessage,
+        areaIds: effSelected,
+        channels,
+        ...(lang === "hi" ? { messageHi: HINDI_PREVIEW } : {}),
+      });
+      setConfirming(false);
+      toast.success("Alert broadcast", {
+        description: `${TIER_LABEL[effTier]} sent to ${effSelected.length} area(s) over ${channels.join(", ")}.`,
+      });
+    } catch (err) {
+      setConfirming(false);
+      toast.error("Broadcast failed", { description: (err as Error).message });
+    }
+  }
+
+  if (isLoading)
+    return (
+      <AppShell>
+        <Loading label="Loading areas…" />
+      </AppShell>
+    );
 
   return (
     <AppShell>
@@ -74,19 +114,29 @@ function BroadcastAlert() {
           <h1 className="display mt-1 text-3xl font-bold">Broadcast alert</h1>
         </header>
 
-        <Panel className="space-y-6 p-5" alert={tier === "severe"}>
+        {!user || (user.role !== "officer" && user.role !== "admin") ? (
+          <Panel className="p-4 text-sm tier-watch">
+            Broadcasting requires an officer or admin sign-in.{" "}
+            <Link to="/login" className="font-semibold underline">
+              Sign in
+            </Link>{" "}
+            (officer@himvaah.in / demo1234). You can still compose a draft below.
+          </Panel>
+        ) : null}
+
+        <Panel className="space-y-6 p-5" alert={effTier === "severe"}>
           <div>
             <p className="mb-2 text-xs tracking-wide text-muted-foreground uppercase">
-              Areas ({selected.length} selected · {population.toLocaleString("en-IN")} people)
+              Areas ({effSelected.length} selected · {population.toLocaleString("en-IN")} people)
             </p>
             <div className="flex flex-wrap gap-2">
               {areas.map((a) => {
-                const on = selected.includes(a.id);
+                const on = effSelected.includes(a.id);
                 const t = tierFor(a.score);
                 return (
                   <button
                     key={a.id}
-                    onClick={() => setSelected(toggle(selected, a.id))}
+                    onClick={() => setSelected(toggle(effSelected, a.id))}
                     className={cn(
                       "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors",
                       on ? "border-ring/60 bg-surface-2" : "border-hairline text-muted-foreground",
@@ -120,7 +170,7 @@ function BroadcastAlert() {
                   onClick={() => setTier(t)}
                   className={cn(
                     "h-11 rounded-xl border text-sm font-semibold transition-colors",
-                    tier === t
+                    effTier === t
                       ? t === "severe"
                         ? "tier-severe"
                         : t === "watch"
@@ -155,7 +205,7 @@ function BroadcastAlert() {
             </div>
             {lang === "en" ? (
               <textarea
-                value={message}
+                value={effMessage}
                 onChange={(e) => setMessage(e.target.value)}
                 rows={3}
                 maxLength={280}
@@ -163,15 +213,14 @@ function BroadcastAlert() {
               />
             ) : (
               <div className="rounded-xl border border-hairline bg-surface-2/40 p-3 text-sm leading-relaxed">
-                तुरंत ऊँचे स्थान पर जाएँ। नदी किनारे की गलियों में एक घंटे के भीतर पानी आने की
-                संभावना है।
+                {HINDI_PREVIEW}
                 <p className="mt-2 text-[11px] text-muted-foreground">
                   Machine translation preview — reviewed before send.
                 </p>
               </div>
             )}
             <p className="num mt-1 text-right text-[11px] text-muted-foreground">
-              {message.length}/280
+              {effMessage.length}/280
             </p>
           </div>
 
@@ -205,7 +254,7 @@ function BroadcastAlert() {
 
           {!confirming ? (
             <button
-              disabled={!selected.length || !channels.length}
+              disabled={!canSend}
               onClick={() => setConfirming(true)}
               className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-primary text-sm font-semibold text-primary-foreground disabled:opacity-40"
             >
@@ -215,22 +264,18 @@ function BroadcastAlert() {
             <div className="animate-rise space-y-3 rounded-xl border border-severe/40 bg-severe-soft p-4">
               <p className="text-sm font-semibold text-severe">Confirm broadcast</p>
               <p className="text-xs leading-relaxed">
-                Sending a <strong>{TIER_LABEL[tier]}</strong> alert to {selected.length} area
-                {selected.length > 1 ? "s" : ""} over {channels.join(", ")} — estimated{" "}
+                Sending a <strong>{TIER_LABEL[effTier]}</strong> alert to {effSelected.length} area
+                {effSelected.length > 1 ? "s" : ""} over {channels.join(", ")} — estimated{" "}
                 {Math.round(population * 0.9).toLocaleString("en-IN")} people reached. This cannot
                 be recalled.
               </p>
               <div className="flex gap-2">
                 <button
-                  onClick={() => {
-                    setConfirming(false);
-                    toast.success("Alert broadcast", {
-                      description: `${TIER_LABEL[tier]} sent to ${selected.length} area(s) over ${channels.join(", ")}.`,
-                    });
-                  }}
-                  className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-lg bg-severe text-sm font-semibold text-foreground"
+                  onClick={send}
+                  disabled={createBroadcast.isPending}
+                  className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-lg bg-severe text-sm font-semibold text-foreground disabled:opacity-50"
                 >
-                  <Send className="size-4" /> Send now
+                  <Send className="size-4" /> {createBroadcast.isPending ? "Sending…" : "Send now"}
                 </button>
                 <button
                   onClick={() => setConfirming(false)}
@@ -246,7 +291,7 @@ function BroadcastAlert() {
         <section>
           <SectionTitle title="Recently broadcast" hint="Last 24 hours across all districts" />
           <div className="space-y-2">
-            {broadcastLog.map((b) => (
+            {log.map((b) => (
               <Panel key={b.id} className="p-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <TierChip tier={b.tier} dot={false} />

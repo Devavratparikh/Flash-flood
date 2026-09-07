@@ -9,8 +9,10 @@ import {
   CloudRain,
   History,
   LifeBuoy,
+  LogOut,
   Map as MapIcon,
   Menu,
+  SlidersHorizontal,
   Radio,
   Search,
   Settings2,
@@ -22,9 +24,17 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppState } from "@/lib/app-state";
-import { areas, districtById, districts, languages, systemStats } from "@/lib/mock-data";
+import { useDistricts, useOverview } from "@/lib/queries";
+import { useLive } from "@/lib/live";
+import { languages } from "@/lib/types";
 
-type NavItem = { to: string; label: string; icon: typeof MapIcon; officerOnly?: boolean };
+type NavItem = {
+  to: string;
+  label: string;
+  icon: typeof MapIcon;
+  officerOnly?: boolean;
+  adminOnly?: boolean;
+};
 
 const NAV: NavItem[] = [
   { to: "/", label: "Home · Risk Map", icon: Waves },
@@ -33,6 +43,7 @@ const NAV: NavItem[] = [
   { to: "/report", label: "Report Conditions", icon: Upload },
   { to: "/emergency", label: "Emergency Info", icon: LifeBuoy },
   { to: "/broadcast", label: "Broadcast Alert", icon: Radio, officerOnly: true },
+  { to: "/control", label: "Sensor Control", icon: SlidersHorizontal, adminOnly: true },
   { to: "/insights", label: "Model Insights", icon: Brain, officerOnly: true },
   { to: "/history", label: "History", icon: History },
   { to: "/preferences", label: "Notifications", icon: Settings2 },
@@ -40,6 +51,8 @@ const NAV: NavItem[] = [
 
 function GlobalSearch() {
   const navigate = useNavigate();
+  const { areas } = useOverview();
+  const { districts } = useDistricts();
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
@@ -61,7 +74,7 @@ function GlobalSearch() {
       .map((x) => ({
         key: x.id,
         label: x.name,
-        sub: districtById(x.districtId)?.name ?? "",
+        sub: districts.find((d) => d.id === x.districtId)?.name ?? "",
         go: () => navigate({ to: "/area/$areaId", params: { areaId: x.id } }),
       }));
     const d = districts
@@ -74,7 +87,7 @@ function GlobalSearch() {
         go: () => navigate({ to: "/districts", search: { d: x.id } }),
       }));
     return [...a, ...d];
-  }, [q, navigate]);
+  }, [q, navigate, areas, districts]);
 
   return (
     <div ref={wrap} className="relative w-full max-w-md">
@@ -125,7 +138,7 @@ function SyncPill() {
     >
       {online ? <Wifi className="size-3.5" /> : <WifiOff className="size-3.5" />}
       <span className="hidden sm:inline">
-        {online ? "Live · synced 2 min ago" : "Offline · cached data from 14 min ago"}
+        {online ? "Live · synced just now" : "Offline · cached data from 14 min ago"}
       </span>
       <span className="sm:hidden">{online ? "Live" : "Offline"}</span>
     </button>
@@ -133,12 +146,19 @@ function SyncPill() {
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { view, setView, language, setLanguage, role } = useAppState();
+  const { view, setView, language, setLanguage, role, user, logout } = useAppState();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const navigate = useNavigate();
+  const { stats } = useOverview();
+  useLive();
 
-  const items = NAV.filter((n) => view === "officer" || !n.officerOnly);
+  const items = NAV.filter((n) => {
+    if (n.adminOnly) return user?.role === "admin";
+    if (n.officerOnly) return view === "officer";
+    return true;
+  });
 
   useEffect(() => {
     setMobileOpen(false);
@@ -187,7 +207,6 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-screen">
-      {/* Desktop sidebar */}
       <aside
         className={cn(
           "panel sticky top-0 hidden h-screen shrink-0 flex-col border-r transition-[width] duration-300 lg:flex",
@@ -212,7 +231,6 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      {/* Mobile drawer */}
       {mobileOpen ? (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div
@@ -255,7 +273,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 title="Active Act Now alerts"
               >
                 <AlertTriangle className="size-3.5" />
-                <span className="num">{systemStats.actNow}</span>
+                <span className="num">{stats?.actNow ?? 0}</span>
               </Link>
 
               <select
@@ -270,7 +288,6 @@ export function AppShell({ children }: { children: ReactNode }) {
                   </option>
                 ))}
               </select>
-
 
               <div className="flex items-center rounded-full border border-hairline bg-surface-2/60 p-0.5">
                 {(["officer", "resident"] as const).map((m) => (
@@ -289,20 +306,39 @@ export function AppShell({ children }: { children: ReactNode }) {
                 ))}
               </div>
 
-              <div className="hidden items-center gap-2 rounded-full border border-hairline bg-surface-2/60 py-1 pr-3 pl-1 xl:flex">
-                <span className="grid size-6 place-items-center rounded-full bg-primary/15 text-[10px] font-bold text-primary">
-                  {view === "officer" ? "DO" : "RS"}
-                </span>
-                <span className="text-xs text-muted-foreground">{role}</span>
-              </div>
+              {user ? (
+                <div className="hidden items-center gap-2 rounded-full border border-hairline bg-surface-2/60 py-1 pr-1 pl-3 xl:flex">
+                  <span className="text-xs text-muted-foreground">{user.name}</span>
+                  <button
+                    onClick={() => {
+                      logout();
+                      navigate({ to: "/login" });
+                    }}
+                    title="Sign out"
+                    className="grid size-6 place-items-center rounded-full hover:bg-surface-2"
+                  >
+                    <LogOut className="size-3.5 text-muted-foreground" />
+                  </button>
+                </div>
+              ) : (
+                <Link
+                  to="/login"
+                  className="hidden rounded-full border border-hairline bg-surface-2/60 px-3 py-1.5 text-xs font-medium xl:block"
+                >
+                  Sign in
+                </Link>
+              )}
             </div>
           </div>
 
           <div className="flex items-center gap-2 border-t border-hairline px-4 py-1.5 text-[11px] text-muted-foreground sm:px-6">
             <Activity className="size-3 text-normal" />
             <span>
-              {systemStats.modelVersion} · last model refresh {systemStats.lastRefresh} ·{" "}
-              {systemStats.areasMonitored} areas across {systemStats.districtsMonitored} districts
+              {stats
+                ? `${stats.modelVersion} · last model refresh ${stats.lastRefresh} · ${stats.areasMonitored} areas across ${stats.districtsMonitored} districts`
+                : "Connecting to backend…"}
+              {" · "}
+              {role}
             </span>
           </div>
         </header>

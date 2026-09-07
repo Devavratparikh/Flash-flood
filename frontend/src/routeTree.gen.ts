@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AlertsRouteImport } from './routes/alerts'
 import { Route as BroadcastRouteImport } from './routes/broadcast'
+import { Route as ControlRouteImport } from './routes/control'
 import { Route as DistrictsRouteImport } from './routes/districts'
 import { Route as EmergencyRouteImport } from './routes/emergency'
 import { Route as HistoryRouteImport } from './routes/history'
@@ -34,6 +35,11 @@ const AlertsRoute = AlertsRouteImport.update({
 const BroadcastRoute = BroadcastRouteImport.update({
   id: '/broadcast',
   path: '/broadcast',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ControlRoute = ControlRouteImport.update({
+  id: '/control',
+  path: '/control',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DistrictsRoute = DistrictsRouteImport.update({
@@ -81,6 +87,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/alerts': typeof AlertsRoute
   '/broadcast': typeof BroadcastRoute
+  '/control': typeof ControlRoute
   '/districts': typeof DistrictsRoute
   '/emergency': typeof EmergencyRoute
   '/history': typeof HistoryRoute
@@ -94,6 +101,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/alerts': typeof AlertsRoute
   '/broadcast': typeof BroadcastRoute
+  '/control': typeof ControlRoute
   '/districts': typeof DistrictsRoute
   '/emergency': typeof EmergencyRoute
   '/history': typeof HistoryRoute
@@ -108,6 +116,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/alerts': typeof AlertsRoute
   '/broadcast': typeof BroadcastRoute
+  '/control': typeof ControlRoute
   '/districts': typeof DistrictsRoute
   '/emergency': typeof EmergencyRoute
   '/history': typeof HistoryRoute
@@ -123,6 +132,7 @@ export interface FileRouteTypes {
     | '/'
     | '/alerts'
     | '/broadcast'
+    | '/control'
     | '/districts'
     | '/emergency'
     | '/history'
@@ -136,6 +146,7 @@ export interface FileRouteTypes {
     | '/'
     | '/alerts'
     | '/broadcast'
+    | '/control'
     | '/districts'
     | '/emergency'
     | '/history'
@@ -149,6 +160,7 @@ export interface FileRouteTypes {
     | '/'
     | '/alerts'
     | '/broadcast'
+    | '/control'
     | '/districts'
     | '/emergency'
     | '/history'
@@ -163,6 +175,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AlertsRoute: typeof AlertsRoute
   BroadcastRoute: typeof BroadcastRoute
+  ControlRoute: typeof ControlRoute
   DistrictsRoute: typeof DistrictsRoute
   EmergencyRoute: typeof EmergencyRoute
   HistoryRoute: typeof HistoryRoute
@@ -194,6 +207,13 @@ declare module '@tanstack/react-router' {
       path: '/broadcast'
       fullPath: '/broadcast'
       preLoaderRoute: typeof BroadcastRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/control': {
+      id: '/control'
+      path: '/control'
+      fullPath: '/control'
+      preLoaderRoute: typeof ControlRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/districts': {
@@ -259,6 +279,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AlertsRoute: AlertsRoute,
   BroadcastRoute: BroadcastRoute,
+  ControlRoute: ControlRoute,
   DistrictsRoute: DistrictsRoute,
   EmergencyRoute: EmergencyRoute,
   HistoryRoute: HistoryRoute,
