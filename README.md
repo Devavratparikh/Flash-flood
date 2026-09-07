@@ -41,13 +41,15 @@ onto whichever watershed they've registered in. Key differentiators from existin
    Incoming readings are aligned to the correct micro-watershed and used to update
    a rolling 3-7 day soil-saturation index per watershed.
 
-3. PREDICTION (Python/Flask service, called by the Node backend over REST)
-   Layer 1 - XGBoost nowcast: given rainfall + antecedent soil/reservoir state,
-             what's the calibrated flash-flood probability? (wired in — the
-             backend computes the model's features from sensor history)
+3. PREDICTION
+   Hydrological index (Node, default) - effective runoff from rainfall
+             intensity, runoff coefficient (soil saturation, floored by
+             intensity), antecedent rain and dam state -> 0-100 score.
+   Layer 1 - XGBoost nowcast (Python/Flask): optional 50/50 blend with the
+             index (RISK_ENGINE=ml-layer1).
    Layer 4 - Sentinel-1 SAR U-Net: post-event flood-extent validation (trained;
-             shown on the Model Insights page)
-   -> Layer 1 probability -> 0-100 risk score + confidence + driver breakdown.
+             shown on the Model Insights page).
+   -> 0-100 risk score + confidence + per-term driver breakdown.
 
 4. STORAGE
    Risk scores are stored in PostgreSQL/PostGIS (spatial queries: which watershed is
@@ -86,6 +88,7 @@ himvaah/
 **Frontend** — React (TanStack Start), Tailwind, TanStack Query, CSS-3D terrain map, socket.io-client.
 **Backend** — Node.js + Express, `pg`, JWT demo auth, Redis + BullMQ (job queue), Socket.IO (real-time push).
 **Database** — PostgreSQL (17-table schema modeled on the frontend data shapes; PostGIS planned for Phase 4).
+**Risk engine** — hand-built hydrological index in Node (default); optional 50/50 blend with a Python XGBoost model.
 **ML** — Python + Flask (isolated microservice): Layer 1 XGBoost nowcast, Layer 4 Sentinel-1 SAR U-Net.
 
 The application layer (frontend + backend) is JS end-to-end; ML is an isolated Python
@@ -96,9 +99,10 @@ the fast-moving app code and the scientific-library-dependent ML code cleanly se
 
 1. **Phase 1 (done)** — Frontend with mocked data; internal college hackathon deliverable.
 2. **Phase 2 (current)** — Database schema + backend API live; frontend calls the API;
-   demo auth, Socket.IO live updates, BullMQ ingestion queue, Node risk heuristic with
-   optional ML proxy.
-3. **Phase 3** — ML service wired in by default; models trained on real DEM/rainfall/historical data.
+   demo auth, Socket.IO live updates, BullMQ ingestion queue, hydrological risk index
+   with an optional XGBoost blend, NDRF sensor-control console.
+3. **Phase 3** — models retrained on real DEM/rainfall/historical data; the ML blend
+   weighted up as it earns trust.
 4. **Phase 4** — Real terrain/satellite data, real SMS/push delivery, PostGIS spatial lookup.
 
 ---
@@ -145,10 +149,14 @@ identical after switching from mock data to the API.
 
 See `backend/README.md` for the full endpoint list and the risk-scoring model.
 
-## Python ML service (Layer 1)
+## Risk scoring
 
-`backend/.env` ships with `RISK_ENGINE=ml-layer1`, so risk scores come from the
-Layer-1 XGBoost model. Run its Flask service in a **third terminal**:
+`backend/.env` ships with `RISK_ENGINE=index` — a hand-built hydrological risk
+index (effective runoff from rainfall intensity, runoff coefficient, antecedent
+rain and dam state). Transparent, smooth in every input, **no Python needed**.
+
+Set `RISK_ENGINE=ml-layer1` to blend the Layer-1 XGBoost model in 50/50; then
+run its Flask service in a **third terminal**:
 
 ```bash
 pip install flask pandas scikit-learn xgboost joblib
@@ -156,12 +164,10 @@ cd ml/flashflood-layer1
 python src/api.py             # Flask on http://localhost:5001
 ```
 
-The Node backend rolls each area's sensor history into the model's 13 features,
-calls `POST /predict/vector`, maps the calibrated flood probability onto the
-0-100 scale and blends it 70/30 with the heuristic. If the service isn't
-running the backend logs a warning and uses the pure heuristic — the app still
-works. Set `RISK_ENGINE=heuristic` to skip Python entirely.
+If the service isn't up the backend logs a warning and scores from the index
+alone. See `backend/README.md` for the index formula and why the ML model is a
+blend, not the default.
 
 Signed in as **NDRF Admin**, the **Sensor Control** page (`/control`) adjusts a
-watershed's rainfall / soil / reservoir inputs and re-scores it through the
-model live — the new score pushes to every open dashboard over Socket.IO.
+watershed's rainfall / soil / reservoir inputs and re-scores it live — the new
+score pushes to every open dashboard over Socket.IO.

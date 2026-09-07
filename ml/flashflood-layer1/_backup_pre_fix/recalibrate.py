@@ -28,7 +28,7 @@ from xgboost_monotonic import train_xgb_monotonic as train_xgb, MONOTONE_CONSTRA
 TRAIN_PATH = Path("data/processed/train.csv")
 TEST_PATH = Path("data/processed/test.csv")
 VAL_CUTOFF_DATE = "2023-01-01"
-THRESHOLD = 0.117  # from xgboost_monotonic.py F2 search
+THRESHOLD = 0.261  # from this run's xgboost_monotonic.py threshold search  # unchanged -- isotonic is monotonic, decision boundary is preserved
 
 
 def print_calibration(y_true, y_proba, label):

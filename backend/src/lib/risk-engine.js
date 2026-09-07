@@ -1,87 +1,110 @@
 /**
  * Risk scoring.
  *
- * Default: a transparent Node heuristic that blends rainfall intensity,
- * antecedent rainfall, soil saturation, upstream dam/reservoir state and
- * upstream propagation into a 0-100 score — the drivers this README
- * describes.
+ * Default (RISK_ENGINE=index): a transparent, hand-built hydrological risk
+ * index. It computes an *effective runoff load* from rainfall intensity, the
+ * runoff coefficient (how much rain runs straight off vs infiltrates), the
+ * antecedent rainfall primer and upstream dam/reservoir state — then maps
+ * that to 0-100. Smooth and continuous in every input, and every driver is a
+ * real term in the formula (no SHAP-on-a-tree guesswork).
  *
- * Optional (RISK_ENGINE=ml-layer1): the score comes from the Python
- * Layer-1 XGBoost service; drivers and lead time are still derived here.
+ * Optional (RISK_ENGINE=ml-layer1): the score is a 50/50 blend of this index
+ * and the Python Layer-1 XGBoost model. Drivers and lead time always come
+ * from the index.
  */
 import { config } from "../config.js";
 import { tierFor, clamp } from "./tiers.js";
 
-/** Map free-text dam status to a 0..1 aggravating factor. */
+/** Map free-text dam / reservoir status to a 0..1 aggravating factor. */
 export function damFactor(damStatus = "") {
   const s = damStatus.toLowerCase();
+  if (/\bno\b[^.]*\brelease\b|no active|normal|nominal/.test(s)) return 0;
   if (/emergency|overtopping|breach/.test(s)) return 0.95;
-  if (/spill|gates open|release:\s*high/.test(s)) return 0.75;
+  if (/spill|gates open|release:\s*high|high release/.test(s)) return 0.75;
   if (/release/.test(s)) return 0.5;
-  if (/\+\d|\bhigh\b|rising/.test(s)) return 0.4;
+  if (/\+\s*\d|\bhigh\b|rising|moderate/.test(s)) return 0.4;
   return 0;
 }
 
 /**
- * @param {object} input
- * @param {number} input.rainfall1hMm
- * @param {number} input.rainfall4hMm
- * @param {number} input.soilSaturationPct
- * @param {number} [input.reservoirLevelPct]
- * @param {string} [input.damStatus]
- * @param {number} [input.maxUpstreamScore]  highest current score among upstream areas
- * @param {number} [input.mlProbability]     0..1 from the ML service, if used
+ * Core hydrological index. Returns the 0..1 effective load plus the
+ * intermediate terms, so drivers can be attributed exactly.
+ *
+ * @param {object} p
+ * @param {number} p.rainfall1hMm
+ * @param {number} p.rainfall4hMm
+ * @param {number} p.soilSaturationPct
+ * @param {number} [p.reservoirLevelPct]
+ * @param {string} [p.damStatus]
+ */
+export function hydroLoad(p) {
+  const rain1 = Math.max(0, Number(p.rainfall1hMm) || 0);
+  const rain4 = Math.max(0, Number(p.rainfall4hMm) || 0);
+  const soil = clamp((Number(p.soilSaturationPct) || 0) / 100, 0, 1);
+
+  // Rainfall intensity — the trigger. Saturating: ~0.5 at 22 mm/hr, ~0.85 at
+  // 60 mm/hr, ~0.97 at 120 mm/hr.
+  const R = 1 - Math.exp(-rain1 / 32);
+
+  // Runoff coefficient: the fraction of rain that becomes runoff rather than
+  // soaking in. Driven by soil saturation, but floored by intensity — no soil
+  // infiltrates a cloudburst (peak infiltration is ~10-30 mm/hr), so above
+  // ~30 mm/hr the ground is effectively impervious regardless of how dry it is.
+  const Cs = 0.15 + 0.8 * Math.pow(soil, 1.3);
+  const Ci = clamp((rain1 - 30) / 90, 0, 0.85);
+  const C = Math.max(Cs, Ci);
+
+  // Antecedent primer — a catchment already wet from the last few hours
+  // responds faster and higher to new rain.
+  const A = clamp(rain4 / 150, 0, 1);
+
+  // Storage stress — an active dam release adds directly to channel flow; a
+  // full reservoir has no buffering capacity left.
+  const D =
+    p.damStatus != null ? damFactor(p.damStatus) : clamp((Number(p.reservoirLevelPct) || 0) / 100, 0, 1) * 0.55;
+
+  const core = R * C * (0.6 + 0.4 * A);
+  const damTerm = 0.22 * D;
+  const load = clamp(core + damTerm, 0, 1);
+
+  return { load, R, C, Cs, Ci, A, D };
+}
+
+/** 0..1 load → 0-100 score. 118 so a full load slightly over-tops, then clamps. */
+function loadToScore(load) {
+  return Math.round(clamp(load * 118, 0, 100));
+}
+
+/**
+ * @param {object} input  rainfall1hMm, rainfall4hMm, soilSaturationPct,
+ *   reservoirLevelPct?, damStatus?, maxUpstreamScore?, ml? ({raw, prob})
  */
 export function scoreArea(input) {
-  const rain1 = clamp((input.rainfall1hMm || 0) / 45, 0, 1);
-  const rain4 = clamp((input.rainfall4hMm || 0) / 130, 0, 1);
-  const soil = clamp((input.soilSaturationPct || 0) / 100, 0, 1);
-  const dam = input.damStatus != null
-    ? damFactor(input.damStatus)
-    : clamp((input.reservoirLevelPct || 0) / 100, 0, 1) * 0.6;
-  const upstream = clamp((input.maxUpstreamScore || 0) / 100, 0, 1);
+  const t = hydroLoad(input);
+  let indexScore = loadToScore(t.load);
 
-  const contributions = {
-    rain1: 0.34 * rain1,
-    soil: 0.3 * soil,
-    rain4: 0.16 * rain4,
-    dam: 0.12 * dam,
-    upstream: 0.08 * upstream,
-  };
-
-  let heuristicScore = 100 * Object.values(contributions).reduce((a, b) => a + b, 0);
-
-  const usedMl = config.riskEngine === "ml-layer1" && input.ml && typeof input.ml.prob === "number";
-
-  // The Layer-1 model outputs a calibrated flash-flood probability. Flash
-  // floods are rare, so even a severe day rarely clears ~0.5 — map the
-  // probability onto the 0-100 UI scale anchored on the model's own decision
-  // threshold (prob == threshold  ->  score 45, the Watch line).
-  let baseScore = heuristicScore;
-  let mlScore = null;
+  const usedMl = config.riskEngine === "ml-layer1" && input.ml && typeof input.ml.raw === "number";
+  let baseScore = indexScore;
   if (usedMl) {
-    const { prob, threshold } = input.ml;
-    const t = threshold > 0 ? threshold : 0.182;
-    mlScore = prob <= t ? (45 * prob) / t : 45 + (55 * (prob - t)) / (2 * t);
-    // Blend: the model carries the flood-probability signal, the heuristic
-    // keeps the score responsive to the raw inputs (the model was trained on
-    // sustained multi-day antecedents this pilot's hourly feed can't supply).
-    baseScore = 0.7 * mlScore + 0.3 * heuristicScore;
+    const mlScore = 100 * Math.pow(clamp(input.ml.raw, 0, 1), 0.85);
+    baseScore = 0.5 * mlScore + 0.5 * indexScore;
   }
 
-  // Surge propagation: a SEVERE upstream reach pulls this one up. The
-  // per-watershed model has no view of neighbouring reaches, so this stays;
-  // a mere Watch upstream no longer pins the whole downstream chain.
-  if ((input.maxUpstreamScore || 0) >= 75) {
-    baseScore = Math.max(baseScore, 0.8 * input.maxUpstreamScore);
-  }
+  // Surge propagation: risk arriving from a much higher upstream reach. The
+  // index is per-watershed, so this is added on top.
+  const up = Number(input.maxUpstreamScore) || 0;
+  if (up >= 55) baseScore = Math.max(baseScore, 0.72 * up);
 
   const score = Math.round(clamp(baseScore, 0, 100));
   const tier = tierFor(score);
-  const leadTimeMin = Math.round(clamp(30 + (100 - score) * 2.1, 30, 240));
-  const confidence = clamp(94 - Math.round(score / 12), 70, 96);
 
-  const drivers = buildDrivers(input, contributions);
+  // Lead time: shorter as risk rises, and shorter still for a high-intensity
+  // (fast-onset) burst.
+  const leadTimeMin = Math.round(clamp(35 + (100 - score) * 2.0 - t.R * 25, 25, 240));
+  // Confidence: highest for clear-cut extremes, lowest mid-range.
+  const confidence = Math.round(clamp(70 + Math.abs(score - 45) * 0.35, 70, 94));
+
+  const drivers = buildDrivers(input, t, score);
   const dominant = drivers[0];
   const dominantDriver = dominant
     ? `${dominant.label} ${dominant.value}`.replace(/\s+/g, " ").trim()
@@ -94,68 +117,83 @@ export function scoreArea(input) {
     confidence,
     dominantDriver,
     drivers,
-    source: usedMl ? "ml-layer1" : "heuristic",
-    modelVersion: usedMl ? "xgb-layer1" : "heuristic-v1",
+    source: usedMl ? "ml-layer1" : "hydro-index",
+    modelVersion: usedMl ? "xgb-layer1 + hydro-index" : "hydro-index-v1",
     mlProbability: usedMl ? input.ml.prob : null,
   };
-}
-
-function buildDrivers(input, c) {
-  const rows = [
-    {
-      label: "Rainfall (1 hr)",
-      value: `${Math.round(input.rainfall1hMm || 0)} mm/hr`,
-      impact: round2(c.rain1 / 0.34),
-      domain: "rain",
-      hint: "Rain measured in this catchment over the last hour.",
-    },
-    {
-      label: "Soil saturation",
-      value: `${Math.round(input.soilSaturationPct || 0)}%`,
-      impact: round2(c.soil / 0.3),
-      domain: "soil",
-      hint: "How full the ground already is. Saturated soil cannot absorb more rain, so it runs straight into the river.",
-    },
-    {
-      label: "Antecedent rainfall (4 hr)",
-      value: `${Math.round(input.rainfall4hMm || 0)} mm`,
-      impact: round2(c.rain4 / 0.16),
-      domain: "rain",
-      hint: "Accumulated rain over the past four hours across the upstream catchment.",
-    },
-  ];
-
-  if (c.dam > 0) {
-    rows.push({
-      label: "Upstream dam / reservoir",
-      value: input.damStatus || `${Math.round(input.reservoirLevelPct || 0)}% full`,
-      impact: round2(c.dam / 0.12),
-      domain: "rain",
-      hint: "Water released from an upstream dam or barrage adds to the natural river flow.",
-    });
-  }
-
-  if ((input.maxUpstreamScore || 0) >= 45) {
-    rows.push({
-      label: "Upstream propagation",
-      value: `+${Math.round(input.maxUpstreamScore)}`,
-      impact: round2(clamp(input.maxUpstreamScore / 100, 0, 1)),
-      domain: "model",
-      hint: "Risk arriving from an area higher up the same river.",
-    });
-  }
-
-  return rows.sort((a, b) => Math.abs(b.impact) - Math.abs(a.impact));
 }
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
 /**
+ * Attribute the score to each term by perturbation: how far would the score
+ * fall if this factor were at a benign baseline? Exact for a hand-built
+ * formula, unlike SHAP on a tree.
+ */
+function buildDrivers(input, t, score) {
+  const at = (over) => loadToScore(hydroLoad({ ...input, ...over }).load);
+
+  const dRain = score - at({ rainfall1hMm: 6 });
+  const dSoil = score - at({ soilSaturationPct: 30 });
+  const dAnte = score - at({ rainfall4hMm: 8 });
+  const dDam = score - at({ damStatus: "normal", reservoirLevelPct: 25 });
+
+  const rows = [
+    {
+      label: "Rainfall intensity (1 hr)",
+      value: `${Math.round(input.rainfall1hMm || 0)} mm/hr`,
+      impact: round2(clamp(dRain / 55, 0, 1)),
+      domain: "rain",
+      hint:
+        t.Ci > t.Cs
+          ? "This burst is intense enough to outpace how fast any soil can absorb it — nearly all of it runs off."
+          : "Rain measured in this catchment over the last hour — the trigger for a flash flood.",
+    },
+    {
+      label: "Soil saturation",
+      value: `${Math.round(input.soilSaturationPct || 0)}%`,
+      impact: round2(clamp(dSoil / 55, 0, 1)),
+      domain: "soil",
+      hint: "How full the ground already is. Saturated soil can't absorb more rain, so it runs straight into the river.",
+    },
+    {
+      label: "Antecedent rainfall (4 hr)",
+      value: `${Math.round(input.rainfall4hMm || 0)} mm`,
+      impact: round2(clamp(dAnte / 55, 0, 1)),
+      domain: "rain",
+      hint: "Rain over the past few hours — a catchment that is already wet responds faster and higher.",
+    },
+  ];
+
+  if (t.D > 0.05) {
+    rows.push({
+      label: "Dam / reservoir stress",
+      value: input.damStatus || `${Math.round(input.reservoirLevelPct || 0)}% full`,
+      impact: round2(clamp(dDam / 55, 0, 1)),
+      domain: "model",
+      hint: "An active upstream release adds directly to channel flow; a full reservoir has no buffering capacity left.",
+    });
+  }
+
+  const up = Number(input.maxUpstreamScore) || 0;
+  if (up >= 55) {
+    rows.push({
+      label: "Upstream surge",
+      value: `+${Math.round(up)}`,
+      impact: round2(clamp(up / 100, 0, 1)),
+      domain: "model",
+      hint: "Risk arriving from an area higher up the same river.",
+    });
+  }
+
+  return rows.filter((r) => r.impact > 0.01).sort((a, b) => b.impact - a.impact);
+}
+
+/**
  * Score a feature vector with the Python Layer-1 XGBoost model via the
- * stateless POST /predict/vector endpoint. The backend computes the 13
- * features from the area's own sensor history (see lib/ml-features.js).
- * Returns the calibrated 0..1 probability, or null on any failure so the
- * caller falls back to the heuristic.
+ * stateless POST /predict/vector endpoint (features from lib/ml-features.js).
+ * Returns { prob, raw, threshold } or null on any failure — the caller then
+ * scores from the hydrological index alone.
  */
 export async function mlProbability({ areaId, features }) {
   if (config.riskEngine !== "ml-layer1" || !features) return null;
@@ -167,18 +205,18 @@ export async function mlProbability({ areaId, features }) {
       signal: AbortSignal.timeout(4000),
     });
     if (!res.ok) {
-      console.warn(`ML /predict/vector returned ${res.status}; using heuristic for ${areaId}`);
+      console.warn(`ML /predict/vector returned ${res.status}; scoring ${areaId} from the index only`);
       return null;
     }
     const body = await res.json();
-    if (typeof body.calibrated_probability !== "number") return null;
+    if (typeof body.raw_probability !== "number") return null;
     return {
       prob: body.calibrated_probability,
       raw: body.raw_probability,
       threshold: body.threshold_used ?? 0.182,
     };
   } catch (err) {
-    console.warn("ML Layer-1 call failed, falling back to heuristic:", err.message);
+    console.warn("ML Layer-1 call failed, scoring from the index only:", err.message);
     return null;
   }
 }

@@ -6,6 +6,7 @@
  * Called by the BullMQ worker (src/worker.js) and, when the queue is
  * unavailable, synchronously by the ingestion route.
  */
+import { config } from "../config.js";
 import { withTransaction, query } from "../db/pool.js";
 import { scoreArea, mlProbability } from "./risk-engine.js";
 import { buildMlFeatures } from "./ml-features.js";
@@ -40,18 +41,22 @@ export async function recomputeArea(areaId) {
   const damStatus = latest?.dam_status ?? area.dam_status;
   const reservoirLevelPct = latest?.reservoir_level_pct ?? null;
 
-  // Feed the Layer-1 model: features computed from this area's own history.
-  const features = buildMlFeatures({
-    rainfall1hMm,
-    soilSaturationPct,
-    reservoirLevelPct: reservoirLevelPct ?? undefined,
-    history: readingRows.slice(1).map((r) => ({
-      rain: Number(r.rainfall_1h_mm),
-      soil: Number(r.soil_saturation_pct),
-      reservoir: r.reservoir_level_pct == null ? null : Number(r.reservoir_level_pct),
-    })),
-  });
-  const ml = await mlProbability({ areaId, features });
+  // RISK_ENGINE=ml-layer1 only: roll this area's history into the model's
+  // features and get a probability to blend with the hydrological index.
+  let ml;
+  if (config.riskEngine === "ml-layer1") {
+    const features = buildMlFeatures({
+      rainfall1hMm,
+      soilSaturationPct,
+      reservoirLevelPct: reservoirLevelPct ?? undefined,
+      history: readingRows.slice(1).map((r) => ({
+        rain: Number(r.rainfall_1h_mm),
+        soil: Number(r.soil_saturation_pct),
+        reservoir: r.reservoir_level_pct == null ? null : Number(r.reservoir_level_pct),
+      })),
+    });
+    ml = await mlProbability({ areaId, features });
+  }
 
   const result = scoreArea({
     rainfall1hMm,

@@ -12,7 +12,7 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET || "dev-only-change-me",
   redisUrl: process.env.REDIS_URL || "redis://localhost:6379",
   useQueue: (process.env.USE_QUEUE ?? "true") !== "false",
-  riskEngine: process.env.RISK_ENGINE || "heuristic", // "heuristic" | "ml-layer1"
+  riskEngine: process.env.RISK_ENGINE || "index", // "index" | "ml-layer1"
   mlLayer1Url: process.env.ML_LAYER1_URL || "http://localhost:5001",
   corsOrigins: (process.env.CORS_ORIGIN || "http://localhost:5173,http://localhost:3000")
     .split(",")

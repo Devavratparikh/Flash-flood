@@ -49,12 +49,17 @@ export function buildMlFeatures({
   const rainfall7dSum = rain + priorRain.slice(0, 6).reduce((a, b) => a + b, 0);
 
   const prev = history[0];
-  const rainfallChange1day = rain - (prev ? Number(prev.rain) || 0 : rain);
+  const clampTo = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+  // rainfall_change_1day carries real "is the storm intensifying" signal; keep
+  // it, clamped to the training range.
+  const rainfallChange1day = clampTo(rain - (prev ? Number(prev.rain) || 0 : rain), -150, 150);
 
-  const threeBack = history[2];
-  const soilChange3day = threeBack ? soil - (Number(threeBack.soil) || 0) : 0;
-  const reservoirChange3day =
-    threeBack && threeBack.reservoir != null ? reservoir - Number(threeBack.reservoir) : 0;
+  // soil_saturation_change_3day / reservoir_change_3day have ~0.01 model
+  // importance and, computed from a sparse mixed hourly history, mostly add
+  // noise that makes successive operator inputs jump non-monotonically. The
+  // pilot feeds absolute levels, not clean 3-day deltas — so hold these at 0.
+  const soilChange3day = 0;
+  const reservoirChange3day = 0;
 
   let daysSinceSignificantRain;
   if (rain > SIGNIFICANT_RAIN_MM) {

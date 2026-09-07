@@ -88,41 +88,23 @@ def simulate_region_physics(rng: np.random.Generator, n_days: int, start_date: s
     # end-of-day version, 0 of 10,950 days had rain>=30mm with soil<40%.)
     soil_start = np.zeros(n_days)
     soil_start[0] = rng.uniform(20, 40)
-    # Faster drainage (real topsoil sheds water in days, not weeks) plus a
-    # small independent day-to-day perturbation (evapotranspiration, local
-    # variability, sub-basin routing). Both push heavy-rain days off the
-    # soil==100 peg often enough that the model can learn a soil *ramp*
-    # rather than treating "soil >= ~80%" as a hard flood gate.
-    decay_rate = rng.uniform(0.10, 0.18)
+    decay_rate = rng.uniform(0.04, 0.07)
     for t in range(1, n_days):
         inflow = rainfall[t - 1] * rng.uniform(0.6, 0.9)
-        jitter = rng.normal(0, 3.5)
-        val = soil_start[t - 1] * (1 - decay_rate) + inflow + jitter
+        val = soil_start[t - 1] * (1 - decay_rate) + inflow
         soil_start[t] = min(100.0, max(0.0, val))
 
-    # --- Reservoir/dam level (%) ---
-    # A managed reservoir is NOT just a passive integrator of local runoff --
-    # operators actively hold it near a seasonally-varying target level (fed by
-    # upstream inflow / snowmelt / release schedules the local rain gauge can't
-    # see). Modelled here as: passive physics (local runoff in, controlled
-    # release out) blended with a pull toward that independent target. This
-    # decouples reservoir level from the local rain/soil state -- an earlier
-    # version made runoff scale with soil_saturation**2, which pinned the
-    # reservoir to a lag of soil and let the trained model treat "reservoir
-    # < ~90%" as a hard no-flood veto.
-    monsoon_curve_full = np.exp(-((day_of_year - 200) ** 2) / (2 * 55 ** 2))
-    target_level = np.clip(
-        42 + 28 * monsoon_curve_full + rng.normal(0, 9, n_days), 10, 98
-    )
+    # --- Reservoir/dam level (%) : same antecedent logic, PLUS urbanization ---
+    # raises runoff (more impervious surface -> faster runoff for the same
+    # rain+saturation, giving urbanization genuine predictive value).
     reservoir_start = np.zeros(n_days)
-    reservoir_start[0] = rng.uniform(30, 60)
-    release_rate = rng.uniform(0.02, 0.04)
+    reservoir_start[0] = rng.uniform(30, 55)
+    release_rate = rng.uniform(0.015, 0.03)
     runoff_boost = 1.0 + 0.6 * urbanization_index
     for t in range(1, n_days):
         saturation_frac = soil_start[t - 1] / 100
-        runoff = rainfall[t - 1] * saturation_frac * rng.uniform(0.15, 0.30) * runoff_boost
-        passive = reservoir_start[t - 1] * (1 - release_rate) + runoff
-        val = 0.82 * passive + 0.18 * target_level[t]
+        runoff = rainfall[t - 1] * saturation_frac ** 2 * rng.uniform(0.4, 0.7) * runoff_boost
+        val = reservoir_start[t - 1] * (1 - release_rate) + runoff
         reservoir_start[t] = min(100.0, max(0.0, val))
 
     return dates, rainfall, soil_start, reservoir_start
@@ -134,54 +116,17 @@ def compute_risk_score(rainfall, soil_saturation, reservoir_level, local_burst):
     risk is comparable across regions and years -- a region that is genuinely
     wetter/more saturated genuinely floods more often).
 
-    DESIGN (v4): rainfall is the PRIMARY trigger; antecedent wetness MODULATES
-    how much of that rain turns into a flood, rather than acting as a hard
-    gate. The earlier version multiplied three co-equal terms each raised to
-    the 1.5 power -- which made a flood structurally impossible unless soil
-    AND reservoir were both near 100%. Because the reservoir is a slow
-    integrator that sits high most of the time, it became the single binding
-    constraint and the trained model learned "reservoir < ~88% => no flood,
-    ignore everything else". That is not how flash floods work: heavy rain on
-    a saturated hillslope floods regardless of a downstream reservoir's exact
-    level, and a dam release can flood on only moderate rain.
-
-    Now:
-      - rain_term is the main signal (0..1, saturating)
-      - antecedent_wetness = mostly soil, with the reservoir a minor component
-      - wetness scales the rain's flood-conversion between 0.30x and 1.0x, so
-        rain always contributes and no single wetness variable can veto.
-
     local_burst is an UNOBSERVED micro-convective factor (not exported as a
-    column) -- localized cloudburst / drainage-choke effects basin-averaged
-    sensors can't see. It caps best-possible model AUC below 1.0, like a real
-    flash-flood problem.
+    column). It represents localized cloudburst / drainage-choke effects that
+    basin-averaged sensors can't see. Its presence caps the best possible
+    model AUC below 1.0 -- exactly like a real flash-flood problem, where no
+    amount of upstream-gauge data perfectly predicts every local event.
     """
-    rainfall = np.asarray(rainfall, dtype=float)
-    rain_term = 1 - np.exp(-rainfall / 30)                        # in [0, 1), saturating
-    # Concave (sqrt) so mid-range moisture contributes proportionally more and
-    # the model learns a smooth soil ramp instead of a near-binary "wet/dry"
-    # cliff at ~80%.
-    soil_term = np.sqrt(np.clip(soil_saturation / 100, 0, 1))
-    reservoir_term = np.sqrt(np.clip(reservoir_level / 100, 0, 1))
-
-    # Weighted SUM, not a product: every factor contributes on its own, so no
-    # single wetness variable can veto the others. Rainfall carries the most
-    # weight (it's the trigger); antecedent soil moisture is the main
-    # modulator; reservoir/storage state is a smaller contributor. A small
-    # interaction term keeps the physical truth that the same rain does more
-    # on already-wet ground.
-    base_risk = (
-        0.55 * rain_term
-        + 0.33 * soil_term
-        + 0.06 * reservoir_term
-        + 0.06 * rain_term * soil_term
-    )
-
-    # A flood needs SOME rain: a saturated catchment on a dry day does not
-    # flash flood. Soft gate -- near-zero below a few mm, full by ~18 mm.
-    base_risk *= np.clip(rainfall / 18, 0, 1)
-
-    return base_risk * (0.55 + 0.45 * local_burst)              # local_burst in [0,1] modulates risk
+    rain_term = 1 - np.exp(-rainfall / 25)           # in [0, 1), saturates by ~mod-heavy rain
+    soil_term = (soil_saturation / 100) ** 1.5       # in [0, 1]
+    reservoir_term = (reservoir_level / 100) ** 1.5  # in [0, 1]
+    base_risk = rain_term * soil_term * reservoir_term
+    return base_risk * (0.55 + 0.45 * local_burst)   # local_burst in [0,1] modulates risk
 
 
 def simulate_region(region_id: int, rng: np.random.Generator, n_days: int, start_date: str):

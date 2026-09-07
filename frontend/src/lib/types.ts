@@ -52,7 +52,7 @@ export type Area = {
   name: string;
   districtId: string;
   score: number;
-  /** where the current score came from: "ml-layer1" | "heuristic" | "seed" */
+  /** where the current score came from: "hydro-index" | "ml-layer1" | "seed" */
   scoreSource?: string;
   modelVersion?: string | null;
   /** raw calibrated flash-flood probability from the Layer-1 model, 0..1 */

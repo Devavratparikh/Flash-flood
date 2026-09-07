@@ -89,44 +89,58 @@ on each event.
 
 `src/lib/risk-engine.js`. Two engines, chosen by `RISK_ENGINE`.
 
-**Heuristic** — transparent Node formula per micro-watershed:
+### `index` (default) — hand-built hydrological risk index
+
+No Python, smooth in every input, and every driver is a real term in the
+formula. The core idea is **effective runoff load** — how much of the rain
+runs straight off instead of soaking in.
 
 ```
-score = 100 * ( 0.34·rain1h + 0.30·soilSat + 0.16·rain4h + 0.12·damState + 0.08·upstream )
+R  = 1 − exp(−rain1h / 32)                      rainfall intensity (the trigger), 0..1
+Cs = 0.15 + 0.80·(soil/100)^1.3                 runoff coefficient from soil saturation
+Ci = clamp((rain1h − 30)/90, 0, 0.85)           …floored by intensity: no soil infiltrates a cloudburst
+C  = max(Cs, Ci)
+A  = clamp(rain4h / 150, 0, 1)                  antecedent primer (already-wet catchment responds harder)
+D  = damFactor(damStatus)  |  reservoir%·0.55   dam release / storage stress
+
+load  = R·C·(0.60 + 0.40·A) + 0.22·D
+score = round(clamp(load · 118, 0, 100))
 ```
 
-**`ml-layer1`** (default) — the Layer-1 XGBoost model does the scoring:
+Drivers are attributed by **perturbation** — how far would the score fall if
+this factor were benign? Exact for a hand-built formula, unlike SHAP on a tree.
 
-1. `src/lib/ml-features.js` rolls the area's `sensor_readings` history into the
-   13 features the model expects (`rainfall_3d_sum`, `rainfall_change_1day`,
-   `soil_saturation_change_3day`, `days_since_significant_rain`, `is_monsoon`,
-   `rain_saturation_interaction`, …).
-2. It POSTs that vector to the Python service's **stateless** `POST /predict/vector`
-   (`ml/flashflood-layer1/src/api.py`), which runs `model.predict_proba` +
-   the isotonic calibrator and returns a calibrated flash-flood probability.
-3. Flash floods are rare, so that probability tops out near ~0.5 even on a bad
-   day. It's mapped onto the 0-100 UI scale anchored on the model's own
-   decision threshold (`prob == threshold → 45`, the Watch line), then
-   **blended 70 % model / 30 % heuristic** so the score still responds to the
-   raw inputs the daily-trained model can't fully use from an hourly feed.
+### `ml-layer1` — index blended with the XGBoost model
 
-Either way: tiers match the frontend (`severe ≥ 75`, `watch ≥ 45`), a **severe**
-upstream reach still lifts the downstream score (surge propagation — the
-per-watershed model has no view of neighbours), and if the Python service is
-unreachable it falls back to the pure heuristic. `risk_scores.source` and
-`risk_scores.ml_probability` record what happened.
+Score = `0.5·(100·raw^0.85) + 0.5·indexScore`, where `raw` is the Layer-1
+model's raw probability (`src/lib/ml-features.js` rolls the area's
+`sensor_readings` into the 13 model features → `POST /predict/vector` on
+`ml/flashflood-layer1/src/api.py`). Drivers and lead time still come from the
+index. Falls back to the index alone if the Python service is unreachable.
+`risk_scores.source` records which ran; `ml_probability` stores the model's
+calibrated probability for the console readout.
+
+Both engines: tiers match the frontend (`severe ≥ 75`, `watch ≥ 45`), and a
+higher upstream reach lifts the downstream score (surge propagation).
 
 A recompute is triggered by `POST /api/areas/:id/readings`. The worker (or the
 inline fallback) writes: the `areas` snapshot, three `risk_scores` rows
 (nowcast / short / baseline), the nowcast's `risk_drivers`, and a fresh
 `weather_forecast`, then emits `risk:update`.
 
-> **Caveat:** the model was trained on *daily* synthetic data; the pilot feed is
-> ~hourly, so the antecedent windows in `ml-features.js` are computed over the
-> last 3 / 7 *readings*, not calendar days. Deterministic and directionally
-> right — a real deployment would match the cadence or retrain hourly.
+### About the ML model
 
-### Running the ML service
+The synthetic dataset had a flaw (label was a strict multiplicative AND of
+three ^1.5 terms → 0 of 329 flood rows below 88 % reservoir → the model learned
+reservoir as a hard veto). `generate_dataset.py` was reworked — weighted-sum
+label, an independently-managed reservoir level, faster topsoil drainage
+(rain/soil correlation 0.80 → 0.36) — and the model retrained. But a
+329-positive-example monotonic XGBoost stays near-binary for mid-range
+conditions, which is why the **index is the default** and `ml-layer1` only
+*blends* the model 50/50. `ml/flashflood-layer1/_backup_pre_fix/` keeps the
+original dataset + model.
+
+Running the ML service (only needed for `RISK_ENGINE=ml-layer1`):
 
 ```bash
 pip install flask pandas scikit-learn xgboost joblib

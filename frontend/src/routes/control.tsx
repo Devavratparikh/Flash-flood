@@ -17,7 +17,7 @@ export const Route = createFileRoute("/control")({
       {
         name: "description",
         content:
-          "NDRF admin console: adjust a micro-watershed's live sensor inputs and see the Layer-1 model re-score it in real time.",
+          "NDRF admin console: adjust a micro-watershed's live sensor inputs and see the risk engine re-score it in real time.",
       },
     ],
   }),
@@ -30,8 +30,9 @@ const SEED_SOURCE: SourceInfo = {
   cls: "text-muted-foreground",
 };
 const SOURCE_LABEL: Record<string, SourceInfo> = {
-  "ml-layer1": { label: "XGBoost Layer-1 model", cls: "text-model" },
-  heuristic: { label: "Node heuristic (ML service offline)", cls: "text-watch" },
+  "ml-layer1": { label: "Hydrological index + XGBoost Layer-1 model", cls: "text-model" },
+  "hydro-index": { label: "Hydrological risk index", cls: "text-model" },
+  heuristic: { label: "Hydrological risk index", cls: "text-model" },
   seed: SEED_SOURCE,
 };
 
@@ -102,7 +103,8 @@ function AreaControl({ area }: { area: Area }) {
         damStatus: dam,
       });
       setResult(res.area);
-      const s = res.area.scoreSource === "ml-layer1" ? "XGBoost model" : "heuristic fallback";
+      const s =
+        res.area.scoreSource === "ml-layer1" ? "index + XGBoost model" : "hydrological index";
       toast.success(`${area.name} re-scored: ${res.area.score}/100`, {
         description: `Scored by the ${s}. Pushed live to every open dashboard.`,
       });
@@ -152,8 +154,9 @@ function AreaControl({ area }: { area: Area }) {
         </button>
         <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
           <Activity className="mt-0.5 size-3 shrink-0 text-normal" />
-          The backend rolls this into the 13 antecedent features the Layer-1 model needs, calls the
-          Python service, and pushes the new score to every open dashboard over the live channel.
+          The backend recomputes the hydrological risk index (effective runoff from intensity, soil
+          saturation, antecedent rain and dam state), optionally blends the XGBoost model, and
+          pushes the new score to every open dashboard over the live channel.
         </p>
       </Panel>
 
@@ -174,8 +177,8 @@ function AreaControl({ area }: { area: Area }) {
           </p>
           {typeof shown.mlProbability === "number" ? (
             <p className="num text-[11px] text-muted-foreground">
-              model flash-flood probability {(shown.mlProbability * 100).toFixed(1)}% · UI score
-              blends model 70% / heuristic 30%
+              model flash-flood probability {(shown.mlProbability * 100).toFixed(1)}% · score is a
+              50/50 blend of the index and the model
             </p>
           ) : null}
         </div>
@@ -263,7 +266,7 @@ function SensorControl() {
           <p className="text-xs tracking-[0.2em] text-muted-foreground uppercase">NDRF console</p>
           <h1 className="display mt-1 text-3xl font-bold">Sensor control</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Adjust a micro-watershed's inputs and re-score it through the Layer-1 model, live.
+            Adjust a micro-watershed's inputs and re-score it through the risk engine, live.
           </p>
         </header>
 

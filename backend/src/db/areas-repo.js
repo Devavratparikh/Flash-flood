@@ -10,7 +10,7 @@ function serializeArea(row, { rainTrend, soilTrend, drivers, upstream, downstrea
     name: row.name,
     districtId: row.district_id,
     score: row.score,
-    scoreSource: scoreMeta?.source ?? "seed", // "ml-layer1" | "heuristic" | "seed"
+    scoreSource: scoreMeta?.source ?? "seed", // "hydro-index" | "ml-layer1" | "seed"
     modelVersion: scoreMeta?.model_version ?? null,
     mlProbability: scoreMeta?.ml_probability ?? null,
     x: row.map_x,
