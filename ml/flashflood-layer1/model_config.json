@@ -1,0 +1,22 @@
+{
+  "model_path": "models/xgb_nowcast_monotonic.json",
+  "calibrator_path": "models/probability_calibrator.pkl",
+  "feature_columns": [
+    "rainfall_mm", "soil_saturation_pct", "reservoir_level_pct",
+    "rainfall_3d_sum", "rainfall_7d_sum",
+    "rainfall_change_1day", "soil_saturation_change_3day", "reservoir_change_3day",
+    "rain_saturation_interaction", "days_since_significant_rain",
+    "month", "is_monsoon", "urbanization_index"
+  ],
+    "raw_threshold": 0.261,
+    "calibrated_threshold": 0.182,
+  "urbanization_index_by_region": {
+    "region_1": 0.5,
+    "region_2": 0.5,
+    "region_3": 0.5,
+    "region_4": 0.5,
+    "region_5": 0.5,
+    "region_6": 0.5
+  },
+  "_comment": "raw_threshold and calibrated_threshold MUST be updated here whenever the model is retrained -- they came from src/xgboost_monotonic.py and src/recalibrate.py's printed output respectively. urbanization_index_by_region is a placeholder -- replace per real region once real LULC/urbanization data is available."
+}
