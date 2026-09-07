@@ -289,6 +289,15 @@ def main():
 
     print(f"Train: {len(train_pairs)}  Val: {len(val_pairs)}  Test: {len(test_pairs)}")
 
+    # Save the exact test-set filenames so test_model.py (or anyone else)
+    # can reload this precise split later, instead of recomputing it from
+    # a fresh shuffle that may not match if the underlying file listing
+    # ever differs even slightly between machines/downloads.
+    import json
+    with open("test_split.json", "w") as f:
+        json.dump([os.path.basename(p[0]) for p in test_pairs], f, indent=2)
+    print("Saved exact test split to test_split.json")
+
     train_ds = make_dataset(train_pairs, training=True)
     val_ds = make_dataset(val_pairs, training=False)
     test_ds = make_dataset(test_pairs, training=False)
